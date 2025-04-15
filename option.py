@@ -1501,7 +1501,32 @@ class OptionsAnalyzer:
              except ValueError:
                   print("Invalid input. Please enter a number.")
                   input("Press Enter to continue...")
-    
+    def display_main_menu(self):
+        """Display the main menu options."""
+        self.clear_screen()
+        print("===== Options Analyzer Menu =====")
+        if self.current_ticker:
+            print(f"Current Ticker: {self.current_ticker} ({self._format_currency(self.current_stock_data['current_price'], self.current_stock_data['currency'])})")
+        else:
+            print("Current Ticker: None")
+        print("-" * 30)
+        print("1. Fetch Stock Data / Change Ticker")
+        print("2. Simple Option Price (BSM & Greeks)")
+        print("3. View Options Chain (Market vs. BSM, IV)")
+        print("4. Analyze Option Strategy (Payoff Diagrams)")
+        print("5. Manage Favorite Tickers")
+        print("6. Configure Settings")
+        print("0. Exit")
+        print("-" * 30)
+        if self.favorite_tickers:
+             fav_str = ", ".join(self.favorite_tickers[:5]) # Show first 5 favorites
+             if len(self.favorite_tickers) > 5: fav_str += "..."
+             print(f"Favorites: {fav_str}")
+             
+             
+             
+             
+             
 def validate_ticker(ticker):
     """Validate if the ticker exists"""
     try:
