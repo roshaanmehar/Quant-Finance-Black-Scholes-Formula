@@ -60,7 +60,10 @@ app_mode = st.sidebar.radio(
     "Choose Analysis:",
     ("Get Quote", "Simple Option Price", "Options Chain Analysis", "Strategy Analysis")
 )
-
+st.sidebar.markdown("---")
+st.sidebar.write(f"**Risk-Free Rate:** {st.session_state.analyzer.risk_free_rate*100:.2f}%")
+st.sidebar.markdown("---")
+st.sidebar.info("Built with Streamlit & yfinance")
 
 
 
