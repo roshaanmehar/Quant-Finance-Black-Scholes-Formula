@@ -1448,7 +1448,59 @@ class OptionsAnalyzer:
             else:
                 print("Invalid option.")
                 input("Press Enter to continue...")
-    
+    def manage_settings(self):
+         """Allow user to view and modify configuration settings."""
+         while True:
+             self.clear_screen()
+             print("--- Configure Settings ---")
+             settings_list = list(self.config.items())
+
+             for i, (key, value) in enumerate(settings_list):
+                  print(f" {i+1}. {key}: {value}")
+
+             print("\n 0. Back to Main Menu (Save Changes)")
+
+             choice = input("\nEnter the number of the setting to change (or 0 to save and exit): ")
+
+             try:
+                  choice_idx = int(choice)
+                  if choice_idx == 0:
+                       self._save_config()
+                       break
+                  elif 1 <= choice_idx <= len(settings_list):
+                       setting_key, current_value = settings_list[choice_idx - 1]
+                       new_value_str = input(f"Enter new value for '{setting_key}' (current: {current_value}): ")
+
+                       # Try to convert to the correct type
+                       try:
+                            if isinstance(current_value, bool):
+                                 if new_value_str.lower() in ['true', 't', 'yes', 'y', '1']:
+                                      new_value = True
+                                 elif new_value_str.lower() in ['false', 'f', 'no', 'n', '0']:
+                                      new_value = False
+                                 else:
+                                      raise ValueError("Invalid boolean value")
+                            elif isinstance(current_value, int):
+                                 new_value = int(new_value_str)
+                            elif isinstance(current_value, float):
+                                 new_value = float(new_value_str)
+                            else: # Assume string
+                                  new_value = new_value_str
+
+                            self.config[setting_key] = new_value
+                            print(f"Set '{setting_key}' to '{new_value}'.")
+
+                       except ValueError:
+                            print(f"Invalid value type entered for '{setting_key}'. Expected type: {type(current_value).__name__}. No change made.")
+
+                       input("Press Enter to continue...")
+                  else:
+                       print("Invalid selection.")
+                       input("Press Enter to continue...")
+
+             except ValueError:
+                  print("Invalid input. Please enter a number.")
+                  input("Press Enter to continue...")
     
 def validate_ticker(ticker):
     """Validate if the ticker exists"""
