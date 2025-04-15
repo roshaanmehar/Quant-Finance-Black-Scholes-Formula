@@ -183,6 +183,112 @@ class OptionsAnalyzer:
 
         print(f"\nSelected expiration date: {selected_exp['date']} ({selected_exp['days']} days)")
         return selected_exp['date']
+    
+    def get_stock_data(self, ticker):
+        """Fetch stock data, company info, and options expirations using yfinance."""
+        ticker = ticker.upper().strip()
+        if not self.validate_ticker(ticker):
+            return None
+
+        try:
+            print(f"\nFetching data for {ticker}...")
+            stock = yf.Ticker(ticker)
+            # Get last year of history for volatility calculation
+            hist = stock.history(period="1y")
+
+            if hist.empty:
+                print(f"Could not fetch historical data for {ticker}.")
+                # Try fetching current quote info as fallback for price
+                info = stock.info
+                current_price = info.get('currentPrice') or info.get('previousClose')
+                if not current_price:
+                     raise ValueError(f"Could not fetch current price for {ticker}")
+                volatility = None # Cannot calculate historical volatility
+                print("Warning: Using current/previous close price, volatility calculation skipped.")
+            else:
+                current_price = hist['Close'].iloc[-1]
+                # Calculate historical volatility (annualized)
+                returns = np.log(hist['Close'] / hist['Close'].shift(1)).dropna()
+                if len(returns) < 2: # Need at least 2 returns for std dev
+                     volatility = None
+                     print("Warning: Not enough historical data to calculate volatility.")
+                else:
+                     volatility = returns.std() * np.sqrt(self.config['volatility_days'])
+
+
+            # Get company info
+            company_name = ticker
+            sector = 'N/A'
+            industry = 'N/A'
+            market_cap_str = 'N/A'
+            currency = 'USD' # Default
+            try:
+                info = stock.info
+                company_name = info.get('shortName', ticker)
+                sector = info.get('sector', 'N/A')
+                industry = info.get('industry', 'N/A')
+                market_cap = info.get('marketCap')
+                currency = info.get('currency', 'USD')
+                if market_cap:
+                    if market_cap >= 1e12:
+                        market_cap_str = f"{self._format_currency(market_cap / 1e12, currency)}T"
+                    elif market_cap >= 1e9:
+                        market_cap_str = f"{self._format_currency(market_cap / 1e9, currency)}B"
+                    elif market_cap >= 1e6:
+                        market_cap_str = f"{self._format_currency(market_cap / 1e6, currency)}M"
+                    else:
+                         market_cap_str = self._format_currency(market_cap, currency)
+
+            except Exception as e:
+                if self.config['debug_mode']:
+                    print(f"Could not fetch detailed company info: {e}")
+
+            # Print stock details
+            print(f"\n=== {company_name} ({ticker}) ===")
+            print(f"Current price: {self._format_currency(current_price, currency)}")
+            print(f"Sector: {sector}")
+            print(f"Industry: {industry}")
+            print(f"Market Cap: {market_cap_str}")
+            if volatility is not None:
+                print(f"Annualized Volatility (1y): {volatility:.4f} ({volatility*100:.2f}%)")
+            else:
+                 print("Annualized Volatility (1y): N/A")
+
+            # Get available expiration dates
+            expirations = ()
+            try:
+                 expirations = stock.options
+                 if not expirations:
+                      print("Note: No options expiration dates found for this ticker.")
+            except Exception as e:
+                 print(f"Could not fetch options expiration dates: {e}")
+
+
+            self.current_ticker = ticker
+            self.current_stock_data = {
+                'ticker': ticker,
+                'current_price': current_price,
+                'volatility': volatility, # Can be None
+                'expirations': expirations,
+                'ticker_object': stock,
+                'history': hist, # Can be empty
+                'info': info, # Store info dict
+                'currency': currency
+            }
+
+            print(f"\nData fetch complete for {ticker}.")
+            return self.current_stock_data
+
+        except Exception as e:
+            print(f"\nError fetching data for '{ticker}': {e}")
+            if self.config['debug_mode']:
+                import traceback
+                traceback.print_exc()
+            # Reset current data if fetch fails
+            if self.current_ticker == ticker:
+                 self.current_ticker = None
+                 self.current_stock_data = None
+            return None
 
 def validate_ticker(ticker):
     """Validate if the ticker exists"""
