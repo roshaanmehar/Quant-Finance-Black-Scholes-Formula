@@ -110,7 +110,35 @@ class OptionsAnalyzer:
         except (TypeError, ValueError):
              return "N/A" # Handle non-numeric inputs gracefully
 
+    def validate_ticker(self, ticker):
+        """Validate if the ticker exists using yfinance."""
+        if not ticker:
+            print("Ticker symbol cannot be empty.")
+            return False
+        try:
+            print(f"\nValidating ticker '{ticker}'...")
+            stock = yf.Ticker(ticker)
+            # Fetching a small piece of info is faster than history
+            info = stock.info
+            if not info or info.get('quoteType') == 'MUTUALFUND': # Exclude mutual funds for options
+                 # Check history as a fallback for less common tickers
+                 hist = stock.history(period="5d")
+                 if hist.empty:
+                     print(f"Ticker '{ticker}' is not valid or no recent data available.")
+                     return False
+            # Basic check if it's likely an equity or ETF
+            if info.get('quoteType') not in ['EQUITY', 'ETF']:
+                 print(f"Warning: Ticker '{ticker}' may not be an equity or ETF ({info.get('quoteType')}). Options might not be available.")
+                 # Allow proceeding but warn the user
 
+            print(f"Ticker '{ticker}' appears valid ({info.get('shortName', 'N/A')}).")
+            return True
+        except Exception as e:
+            print(f"Error validating ticker '{ticker}': {e}")
+            if self.config['debug_mode']:
+                import traceback
+                traceback.print_exc()
+            return False
 
 
 
