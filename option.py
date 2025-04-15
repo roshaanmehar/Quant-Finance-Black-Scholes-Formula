@@ -918,7 +918,110 @@ class OptionsAnalyzer:
                 import traceback
                 traceback.print_exc()
             return None
-    
+    def visualize_options_chain(self, df, current_price, currency, expiration_date):
+        """Visualize the options chain data using matplotlib."""
+        if df is None or df.empty:
+            print("No data available to visualize.")
+            return
+
+        df = df.copy() # Work on a copy
+        df = df.dropna(subset=['strike']) # Ensure strikes are valid
+
+        fig, axes = plt.subplots(2, 1, figsize=(12, 10), sharex=True)
+        fig.suptitle(f"{self.current_ticker} Options Chain ({expiration_date}) - Current Price: {self._format_currency(current_price, currency)}", fontsize=16)
+
+        # --- Plot 1: Prices (Market vs. BSM) ---
+        ax1 = axes[0]
+        # Calls
+        if 'market_call' in df.columns:
+            ax1.plot(df['strike'], df['market_call'], 'bo-', label='Market Call', markersize=5, alpha=0.7)
+        if 'bsm_call' in df.columns:
+             ax1.plot(df['strike'], df['bsm_call'], 'b--', label='BSM Call', alpha=0.7)
+        # Puts
+        if 'market_put' in df.columns:
+             ax1.plot(df['strike'], df['market_put'], 'ro-', label='Market Put', markersize=5, alpha=0.7)
+        if 'bsm_put' in df.columns:
+             ax1.plot(df['strike'], df['bsm_put'], 'r--', label='BSM Put', alpha=0.7)
+
+        ax1.set_ylabel(f'Option Price ({currency})')
+        ax1.set_title('Market Price vs. BSM Price')
+        ax1.legend()
+        ax1.grid(True)
+        # Add vertical line for current price
+        ax1.axvline(current_price, color='grey', linestyle=':', lw=2, label=f'Current Price ({self._format_currency(current_price, currency)})')
+        ax1.legend() # Show legend again to include vline label
+
+        # --- Plot 2: Implied Volatility ---
+        ax2 = axes[1]
+        if 'call_iv' in df.columns and df['call_iv'].notna().any():
+            ax2.plot(df['strike'], df['call_iv'], 'go-', label='Call Implied Volatility (%)', markersize=5)
+        if 'put_iv' in df.columns and df['put_iv'].notna().any():
+            ax2.plot(df['strike'], df['put_iv'], 'mo-', label='Put Implied Volatility (%)', markersize=5)
+
+        # Add horizontal line for historical volatility if available
+        if self.current_stock_data and self.current_stock_data['volatility'] is not None:
+             hist_vol = self.current_stock_data['volatility'] * 100
+             ax2.axhline(hist_vol, color='black', linestyle='--', lw=1, label=f'Hist. Vol ({hist_vol:.2f}%)')
+
+
+        ax2.set_xlabel('Strike Price')
+        ax2.set_ylabel('Implied Volatility (%)')
+        ax2.set_title('Implied Volatility Smile / Skew')
+        ax2.legend()
+        ax2.grid(True)
+        # Add vertical line for current price
+        ax2.axvline(current_price, color='grey', linestyle=':', lw=2)
+
+
+        plt.tight_layout(rect=[0, 0.03, 1, 0.95]) # Adjust layout to prevent title overlap
+        try:
+             plt.show()
+        except Exception as e:
+             print(f"\nError displaying plot: {e}. You might need to configure your matplotlib backend.")
+             print("Try running this in an environment that supports GUI popups.")
+
+    # --- Options Strategy Analysis ---
+
+    def _calculate_payoff(self, S_T, strategy_legs, S0):
+        """Calculates the payoff of a strategy at a given underlying price S_T."""
+        total_payoff = 0
+        initial_cost = 0
+
+        for leg in strategy_legs:
+            leg_type = leg['type']      # 'stock', 'call', 'put'
+            direction = leg['dir']      # 'long', 'short'
+            K = leg.get('K')            # Strike price (for options)
+            price = leg.get('price', 0) # Cost/premium of the leg
+
+            # Calculate initial cost/credit
+            if direction == 'long':
+                 initial_cost += price
+            else: # short
+                 initial_cost -= price # Credit received reduces cost
+
+            # Calculate payoff at expiration S_T
+            payoff_leg = 0
+            if leg_type == 'stock':
+                # Payoff is the change in stock price from the initial price S0
+                # However, payoff diagrams usually show P/L relative to initial cost,
+                # so the stock payoff is just S_T. The cost is handled by initial_cost.
+                 payoff_leg = S_T
+            elif leg_type == 'call':
+                if direction == 'long':
+                    payoff_leg = max(0, S_T - K)
+                else: # short
+                    payoff_leg = -max(0, S_T - K)
+            elif leg_type == 'put':
+                if direction == 'long':
+                    payoff_leg = max(0, K - S_T)
+                else: # short
+                    payoff_leg = -max(0, K - S_T)
+
+            total_payoff += payoff_leg
+
+        # Profit/Loss = Final Payoff - Initial Cost (or + Initial Credit)
+        profit_loss = total_payoff - initial_cost
+        return profit_loss
     
 def validate_ticker(ticker):
     """Validate if the ticker exists"""
