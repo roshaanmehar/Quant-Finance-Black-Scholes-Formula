@@ -242,3 +242,220 @@ elif app_mode == "Options Chain Analysis":
                            # Call the refactored visualization function that returns a figure
                            fig = analyzer.visualize_options_chain(chain_df_to_plot, current_price, currency, exp_date_for_plot)
                            st.pyplot(fig)
+elif app_mode == "Strategy Analysis":
+    st.title("📈 Options Strategy Analyzer")
+    st.markdown("Analyze the payoff profile, breakeven points, max profit/loss for common options strategies.")
+
+    if 'stock_data' not in st.session_state or not st.session_state.stock_data:
+        st.warning("Please fetch stock data first using the 'Get Quote' section.")
+    else:
+        stock_data = st.session_state.stock_data
+        analyzer = st.session_state.analyzer
+        S0 = stock_data['current_price']
+        expirations = stock_data['expirations']
+        currency = stock_data['currency']
+        risk_free_rate = analyzer.risk_free_rate
+        volatility = stock_data.get('volatility') # May be None
+
+        if not expirations:
+             st.error(f"No options expiration dates found for {stock_data['ticker']}. Cannot analyze strategies.")
+        else:
+            # --- Strategy Selection and Inputs ---
+            strategy_map = {
+                "Covered Call": 1,
+                "Protective Put": 2,
+                "Bull Call Spread": 3,
+                "Bear Put Spread": 4,
+                "Long Straddle": 5,
+                "Long Strangle": 6
+            }
+            strategy_name = st.selectbox("Select Strategy", options=list(strategy_map.keys()))
+            strategy_choice = strategy_map[strategy_name]
+
+            with st.form("strategy_form"):
+                st.subheader(f"{strategy_name} Parameters")
+                expiration_date = st.selectbox("Expiration Date", options=expirations, key="strat_exp")
+
+                # --- Strategy Specific Inputs ---
+                K_call, K_put, K_low, K_high = None, None, None, None
+
+                if strategy_choice == 1: # Covered Call
+                    K_call = st.number_input("Call Strike (Short)", min_value=0.01, value=round(S0*1.05), step=1.0)
+                elif strategy_choice == 2: # Protective Put
+                    K_put = st.number_input("Put Strike (Long)", min_value=0.01, value=round(S0*0.95), step=1.0)
+                elif strategy_choice == 3: # Bull Call Spread
+                    c1, c2 = st.columns(2)
+                    K_low = c1.number_input("Lower Call Strike (Long)", min_value=0.01, value=round(S0*0.98), step=1.0)
+                    K_high = c2.number_input("Higher Call Strike (Short)", min_value=0.01, value=round(S0*1.02), step=1.0)
+                elif strategy_choice == 4: # Bear Put Spread
+                    c1, c2 = st.columns(2)
+                    K_high = c1.number_input("Higher Put Strike (Long)", min_value=0.01, value=round(S0*1.02), step=1.0)
+                    K_low = c2.number_input("Lower Put Strike (Short)", min_value=0.01, value=round(S0*0.98), step=1.0)
+                elif strategy_choice == 5: # Long Straddle (ATM)
+                    st.write("Straddle uses the strike closest to the current price.")
+                    # K_atm determined later
+                elif strategy_choice == 6: # Long Strangle
+                     c1, c2 = st.columns(2)
+                     K_call = c1.number_input("OTM Call Strike (Long)", min_value=0.01, value=round(S0*1.05), step=1.0)
+                     K_put = c2.number_input("OTM Put Strike (Long)", min_value=0.01, value=round(S0*0.95), step=1.0)
+
+                submitted = st.form_submit_button("Analyze Strategy")
+
+                # --- Processing ---
+                if submitted:
+                    strategy_legs = []
+                    breakevens = []
+                    max_profit = np.nan
+                    max_loss = np.nan
+                    error_msg = None
+                    summary_info = {}
+
+                    try:
+                        # Fetch necessary option prices (Handle potential errors/missing data)
+                        def get_price(k, opt_type):
+                             data = analyzer._get_option_data_for_strike(expiration_date, k, opt_type)
+                             if data is None or pd.isna(data['lastPrice']) or data['lastPrice'] <= 0:
+                                  st.warning(f"Market price for {opt_type.capitalize()} K={k} unavailable/zero. Using BSM estimate.")
+                                  # Fallback BSM calculation (simplified)
+                                  vol = volatility if volatility is not None else 0.3 # Use hist vol or 30% default
+                                  today = dt.datetime.now().date()
+                                  exp_d = dt.datetime.strptime(expiration_date, '%Y-%m-%d').date()
+                                  T = max(0, (exp_d - today).days) / 365.0
+                                  price = analyzer.black_scholes_merton(S0, k, T, risk_free_rate, vol, opt_type)
+                                  if pd.isna(price): raise ValueError(f"Could not estimate price for {opt_type.capitalize()} K={k}")
+                                  return price
+                             return data['lastPrice']
+
+                        # --- Build Strategy Legs based on UI inputs ---
+                        if strategy_choice == 1: # Covered Call
+                             prem_call = get_price(K_call, 'call')
+                             strategy_legs = [{'type': 'stock', 'dir': 'long', 'price': S0},
+                                              {'type': 'call', 'dir': 'short', 'K': K_call, 'price': prem_call}]
+                             cost_basis = S0 - prem_call
+                             breakevens = [cost_basis]
+                             max_profit = (K_call - S0) + prem_call
+                             max_loss = -cost_basis
+                             summary_info = {'Net Cost Basis': cost_basis, 'Short Call Premium': prem_call}
+
+                        elif strategy_choice == 2: # Protective Put
+                             prem_put = get_price(K_put, 'put')
+                             strategy_legs = [{'type': 'stock', 'dir': 'long', 'price': S0},
+                                              {'type': 'put', 'dir': 'long', 'K': K_put, 'price': prem_put}]
+                             total_cost = S0 + prem_put
+                             breakevens = [total_cost]
+                             max_profit = float('inf')
+                             max_loss = -(S0 - K_put + prem_put)
+                             summary_info = {'Total Cost': total_cost, 'Long Put Premium': prem_put}
+
+                        elif strategy_choice == 3: # Bull Call Spread
+                             if not (0 < K_low < K_high): raise ValueError("Strikes must be positive and Low < High.")
+                             prem_low = get_price(K_low, 'call')
+                             prem_high = get_price(K_high, 'call')
+                             net_debit = prem_low - prem_high
+                             strategy_legs = [{'type': 'call', 'dir': 'long', 'K': K_low, 'price': prem_low},
+                                              {'type': 'call', 'dir': 'short', 'K': K_high, 'price': prem_high}]
+                             max_profit = (K_high - K_low) - net_debit
+                             max_loss = -net_debit
+                             breakevens = [K_low + net_debit]
+                             summary_info = {'Net Debit': net_debit, 'Long Call Prem': prem_low, 'Short Call Prem': prem_high}
+
+                        elif strategy_choice == 4: # Bear Put Spread
+                            if not (0 < K_low < K_high): raise ValueError("Strikes must be positive and Low < High.")
+                            prem_high = get_price(K_high, 'put')
+                            prem_low = get_price(K_low, 'put')
+                            net_debit = prem_high - prem_low
+                            strategy_legs = [{'type': 'put', 'dir': 'long', 'K': K_high, 'price': prem_high},
+                                              {'type': 'put', 'dir': 'short', 'K': K_low, 'price': prem_low}]
+                            max_profit = (K_high - K_low) - net_debit
+                            max_loss = -net_debit
+                            breakevens = [K_high - net_debit]
+                            summary_info = {'Net Debit': net_debit, 'Long Put Prem': prem_high, 'Short Put Prem': prem_low}
+
+                        elif strategy_choice == 5: # Long Straddle
+                             # Find ATM strike
+                             options = analyzer.current_stock_data['ticker_object'].option_chain(expiration_date)
+                             all_strikes = sorted(list(set(options.calls['strike'].tolist() + options.puts['strike'].tolist())))
+                             if not all_strikes: raise ValueError("No strikes found.")
+                             K_atm = min(all_strikes, key=lambda x: abs(x - S0))
+                             st.info(f"Using ATM Strike: {format_currency(K_atm, currency)}")
+                             prem_call = get_price(K_atm, 'call')
+                             prem_put = get_price(K_atm, 'put')
+                             total_cost = prem_call + prem_put
+                             strategy_legs = [{'type': 'call', 'dir': 'long', 'K': K_atm, 'price': prem_call},
+                                              {'type': 'put', 'dir': 'long', 'K': K_atm, 'price': prem_put}]
+                             max_profit = float('inf')
+                             max_loss = -total_cost
+                             breakevens = [K_atm - total_cost, K_atm + total_cost]
+                             summary_info = {'Total Cost': total_cost, 'ATM Strike': K_atm, 'Call Prem': prem_call, 'Put Prem': prem_put}
+
+                        elif strategy_choice == 6: # Long Strangle
+                             if not (0 < K_put < K_call): print("Warning: Ensure Call Strike > Put Strike.") # UI allows any K
+                             if K_put <= 0 or K_call <= 0: raise ValueError("Strikes must be positive.")
+                             prem_call = get_price(K_call, 'call')
+                             prem_put = get_price(K_put, 'put')
+                             total_cost = prem_call + prem_put
+                             strategy_legs = [{'type': 'call', 'dir': 'long', 'K': K_call, 'price': prem_call},
+                                              {'type': 'put', 'dir': 'long', 'K': K_put, 'price': prem_put}]
+                             max_profit = float('inf')
+                             max_loss = -total_cost
+                             breakevens = [K_put - total_cost, K_call + total_cost]
+                             summary_info = {'Total Cost': total_cost, 'Call Strike': K_call, 'Put Strike': K_put, 'Call Prem': prem_call, 'Put Prem': prem_put}
+
+                    except ValueError as ve:
+                        error_msg = f"Input Error: {ve}"
+                    except Exception as e:
+                         error_msg = f"Analysis Error: {e}"
+                         print(f"Strategy analysis error: {e}") # Log for debugging
+
+                    # --- Display Results ---
+                    st.markdown("---")
+                    if error_msg:
+                        st.error(error_msg)
+                    elif not strategy_legs:
+                         st.error("Could not build strategy legs based on input.")
+                    else:
+                        st.subheader("Strategy Analysis Results")
+
+                        # Calculate Payoff range
+                        price_range_pct = analyzer.config['strategy_price_range']
+                        S_T_min = S0 * (1 - price_range_pct)
+                        S_T_max = S0 * (1 + price_range_pct)
+                        if breakevens:
+                            valid_bes = [be for be in breakevens if pd.notna(be)]
+                            if valid_bes:
+                                S_T_min = min(S_T_min, min(valid_bes) * 0.9)
+                                S_T_max = max(S_T_max, max(valid_bes) * 1.1)
+                        S_T_range = np.linspace(max(0, S_T_min), S_T_max, 150)
+                        PnL = np.array([analyzer._calculate_payoff(s_t, strategy_legs, S0) for s_t in S_T_range])
+
+                        # Display summary table/metrics
+                        col_s1, col_s2 = st.columns(2)
+                        with col_s1:
+                             st.markdown("**Strategy Legs:**")
+                             legs_df = pd.DataFrame(strategy_legs)
+                             st.dataframe(legs_df[['dir', 'type', 'K', 'price']].fillna('-').style.format({'K': lambda x: format_currency(x, currency) if x != '-' else '-',
+                                                                                                           'price': lambda x: format_currency(x, currency) if x != '-' else '-'}))
+                             if summary_info:
+                                  st.markdown("**Key Values:**")
+                                  for key, val in summary_info.items():
+                                       st.metric(key, format_currency(val, currency) if isinstance(val, (int, float)) else val)
+
+
+                        with col_s2:
+                            st.markdown("**Risk Profile:**")
+                            be_str = ", ".join([format_currency(be, currency) for be in breakevens if pd.notna(be)]) or "N/A"
+                            mp_str = format_currency(max_profit, currency) if pd.notna(max_profit) and max_profit != float('inf') else ('Unlimited' if max_profit == float('inf') else 'N/A')
+                            ml_str = format_currency(max_loss, currency) if pd.notna(max_loss) and max_loss != float('-inf') else ('Unlimited' if max_loss == float('-inf') else 'N/A')
+                            st.metric("Breakeven(s)", be_str)
+                            st.metric("Max Profit", mp_str, delta_color="off") # No up/down arrow needed
+                            st.metric("Max Loss", ml_str, delta_color="off")
+
+                        # Display Payoff Plot
+                        st.markdown("---")
+                        st.subheader("Payoff Diagram")
+                        try:
+                            # Call refactored plot function
+                            fig = analyzer._plot_payoff(S_T_range, PnL, strategy_name, breakevens, max_profit, max_loss, currency)
+                            st.pyplot(fig)
+                        except Exception as plot_err:
+                             st.error(f"Could not generate plot: {plot_err}")
