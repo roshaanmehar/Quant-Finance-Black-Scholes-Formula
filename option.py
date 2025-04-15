@@ -61,6 +61,26 @@ class OptionsAnalyzer:
             print("Configuration saved successfully.")
         except Exception as e:
             print(f"Error saving configuration to '{config_path}': {e}")
+    
+    
+    def _load_favorite_tickers(self):
+        """Load favorite tickers from file."""
+        favorites_path = 'favorite_tickers.json'
+        try:
+            if os.path.exists(favorites_path):
+                with open(favorites_path, 'r') as f:
+                    favorites = json.load(f)
+                    print(f"Loaded {len(favorites)} favorite tickers.")
+                    return favorites
+            else:
+                 print("No favorite tickers file found.")
+                 return []
+        except json.JSONDecodeError:
+             print(f"Error reading favorites file '{favorites_path}'. Starting fresh.")
+             return []
+        except Exception as e:
+            print(f"Error loading favorite tickers: {e}. Starting fresh.")
+            return []
 
 
 
