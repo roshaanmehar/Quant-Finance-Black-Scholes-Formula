@@ -140,7 +140,49 @@ class OptionsAnalyzer:
                 traceback.print_exc()
             return False
 
+    def _select_expiration_date(self, expirations):
+        """Lists available expiration dates and prompts user selection."""
+        if not expirations:
+            print("No expiration dates available for this ticker.")
+            return None
 
+        print("\nAvailable expiration dates:")
+        valid_expirations = []
+        today = dt.datetime.now().date()
+        for i, date_str in enumerate(expirations):
+            try:
+                exp_date = dt.datetime.strptime(date_str, '%Y-%m-%d').date()
+                days = (exp_date - today).days
+                if days >= 0: # Only show non-expired dates
+                    print(f"{len(valid_expirations) + 1}. {date_str} ({days} days)")
+                    valid_expirations.append({'index': i, 'date': date_str, 'days': days})
+            except ValueError:
+                 if self.config['debug_mode']:
+                     print(f"Skipping invalid date format: {date_str}")
+                 continue # Skip invalid date formats
+
+        if not valid_expirations:
+            print("No valid future expiration dates found.")
+            return None
+
+        while True:
+            try:
+                selection = input(f"\nSelect expiration date (1-{len(valid_expirations)}): ")
+                if not selection: # Handle empty input
+                    print("Using first available date.")
+                    selected_exp = valid_expirations[0]
+                    break
+                idx = int(selection) - 1
+                if 0 <= idx < len(valid_expirations):
+                    selected_exp = valid_expirations[idx]
+                    break
+                else:
+                    print("Invalid selection. Please enter a number from the list.")
+            except ValueError:
+                print("Invalid input. Please enter a number.")
+
+        print(f"\nSelected expiration date: {selected_exp['date']} ({selected_exp['days']} days)")
+        return selected_exp['date']
 
 def validate_ticker(ticker):
     """Validate if the ticker exists"""
