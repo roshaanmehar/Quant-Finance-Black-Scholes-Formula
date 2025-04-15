@@ -289,7 +289,38 @@ class OptionsAnalyzer:
                  self.current_ticker = None
                  self.current_stock_data = None
             return None
+    def get_risk_free_rate(self):
+        """Get risk-free rate from Treasury yield (10-year as proxy) or default."""
+        try:
+            # print("Fetching current risk-free rate (10-Year Treasury Yield)...")
+            # Using ^TNX for 10-Year Treasury Yield Index CBOE
+            treasury = yf.Ticker("^TNX")
+            # Fetch only the most recent data point needed
+            data = treasury.history(period="5d") # Fetch a few days for robustness
+            if not data.empty:
+                # Use the latest closing value, convert from percentage to decimal
+                rate = data['Close'].iloc[-1] / 100
+                # Basic sanity check for the rate
+                if 0 <= rate <= 0.2: # Assume rate won't be negative or > 20%
+                    print(f"Using current risk-free rate (10Y Treasury): {rate:.4f} ({rate*100:.2f}%)")
+                    self.risk_free_rate = rate
+                    return rate
+                else:
+                     print(f"Warning: Fetched treasury rate ({rate:.4f}) seems unusual. Falling back to default.")
+            else:
+                 print("Could not fetch treasury data. Falling back to default.")
 
+        except Exception as e:
+            print(f"Error fetching risk-free rate: {e}. Falling back to default.")
+            if self.config['debug_mode']:
+                import traceback
+                traceback.print_exc()
+
+        # Fallback to default if API fails or data is unusual
+        default_rate = self.config['default_risk_free_rate']
+        print(f"Using default risk-free rate: {default_rate:.4f} ({default_rate*100:.2f}%)")
+        self.risk_free_rate = default_rate
+        return default_rate
 def validate_ticker(ticker):
     """Validate if the ticker exists"""
     try:
