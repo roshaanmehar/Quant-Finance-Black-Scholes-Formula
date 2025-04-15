@@ -6,6 +6,21 @@ import yfinance as yf #for fetching financial data from yahoo finance api
 import datetime as dt 
 from scipy.stats import norm #for statistical calculations and functions
 from tabulate import tabulate #to tabulate data in the console
+
+def validate_ticker(ticker):
+    """Validate if the ticker exists"""
+    try:
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period="1d")
+        if hist.empty:
+            return False
+        return True
+    except:
+        return False
+
+
+
+
 def visualize_options_chain(df, current_price):
     """
     Visualize the options chain using matplotlib
