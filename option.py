@@ -7,6 +7,31 @@ import datetime as dt
 from scipy.stats import norm #for statistical calculations and functions
 from tabulate import tabulate #to tabulate data in the console
 
+
+
+def calculate_implied_volatility(S, K, T, r, market_price, option_type="call", precision=0.0001):
+    """
+    Calculate implied volatility using bisection method
+    """
+    max_iterations = 100
+    vol_low = 0.001
+    vol_high = 5.0  # 500% volatility as upper bound
+    
+    for i in range(max_iterations):
+        vol_mid = (vol_low + vol_high) / 2
+        price = black_scholes_merton(S, K, T, r, vol_mid, option_type)
+        
+        if abs(price - market_price) < precision:
+            return vol_mid
+        
+        if price > market_price:
+            vol_high = vol_mid
+        else:
+            vol_low = vol_mid
+    
+    return (vol_low + vol_high) / 2
+
+
 def calculate_option_greeks(S, K, T, r, sigma, option_type="call"):
     """
     Calculate option Greeks using Black-Scholes-Merton model
