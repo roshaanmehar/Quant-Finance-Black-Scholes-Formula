@@ -451,6 +451,89 @@ class OptionsAnalyzer:
             print(f"Error calculating Greeks: {e}")
             return {k: np.nan for k in greeks}
     
+    def calculate_implied_volatility(self, S, K, T, r, market_price, option_type="call"):
+        """
+        Calculate implied volatility using a bisection method.
+
+        Returns: Implied volatility (annualized decimal) or np.nan if calculation fails.
+        """
+        option_type = option_type.lower()
+        precision = self.config['iv_precision']
+        max_iterations = self.config['iv_max_iterations']
+
+        # --- Input Validation and Edge Cases ---
+        if market_price <= 0 or T <= 0 or S <= 0 or K <= 0:
+            return np.nan # Cannot calculate IV for zero price or expired/invalid options
+
+        # Check if market price is below intrinsic value (arbitrage or bad data)
+        intrinsic_value = 0.0
+        if option_type == "call":
+            intrinsic_value = max(0.0, S - K * np.exp(-r * T)) # Use discounted strike for comparison
+        elif option_type == "put":
+            intrinsic_value = max(0.0, K * np.exp(-r * T) - S)
+        else:
+             print(f"Warning: Invalid option type '{option_type}' for IV.")
+             return np.nan
+
+        # Allow a small tolerance for rounding errors in market data
+        if market_price < intrinsic_value - precision:
+            # print(f"Warning: Market price ({market_price:.4f}) is below intrinsic value ({intrinsic_value:.4f}) for {option_type} K={K}. Cannot calculate IV.")
+            return np.nan
+
+        # --- Bisection Method ---
+        vol_low = 1e-5  # Lower bound for volatility (slightly above zero)
+        vol_high = 5.0  # Upper bound (500% volatility) - adjust if needed
+
+        # Calculate price at bounds
+        price_low = self.black_scholes_merton(S, K, T, r, vol_low, option_type)
+        price_high = self.black_scholes_merton(S, K, T, r, vol_high, option_type)
+
+        # Check if market price is outside the possible range for vol_low/vol_high
+        if pd.isna(price_low) or pd.isna(price_high):
+             # print(f"Warning: BSM returned NaN at volatility bounds for K={K}. Cannot calculate IV.")
+             return np.nan
+
+        if market_price <= price_low:
+            return vol_low # Market price is below price at minimum volatility
+        if market_price >= price_high:
+            return vol_high # Market price is above price at maximum volatility
+
+        # Bisection search loop
+        for _ in range(max_iterations):
+            vol_mid = (vol_low + vol_high) / 2
+            price_mid = self.black_scholes_merton(S, K, T, r, vol_mid, option_type)
+
+            if pd.isna(price_mid): # Handle BSM errors during iteration
+                 # Try adjusting bounds slightly, could be numerical instability
+                 if self.config['debug_mode']: print(f"BSM returned NaN at vol_mid={vol_mid}. Adjusting IV bounds.")
+                 vol_high = vol_mid # Or vol_low = vol_mid, depending on direction needed
+                 continue
+
+            # Check for convergence
+            if abs(price_mid - market_price) < precision:
+                return vol_mid
+
+            # Narrow the search interval
+            if price_mid > market_price:
+                vol_high = vol_mid
+            else:
+                vol_low = vol_mid
+
+            # Check if bounds are too close
+            if abs(vol_high - vol_low) < precision:
+                 break
+
+
+        # If max_iterations reached without convergence, return the midpoint
+        final_vol = (vol_low + vol_high) / 2
+        # Final check: is the price at final_vol reasonably close?
+        final_price = self.black_scholes_merton(S, K, T, r, final_vol, option_type)
+        if pd.notna(final_price) and abs(final_price - market_price) < precision * 10: # Looser check
+             return final_vol
+        else:
+             # print(f"Warning: IV calculation did not converge sufficiently for K={K}. Market: {market_price:.2f}, Model: {final_price:.2f} at IV {final_vol*100:.2f}%")
+             return np.nan # Indicate failure to converge reliably
+
     
     
     
