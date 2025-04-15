@@ -357,7 +357,39 @@ class OptionsAnalyzer:
                  import traceback
                  traceback.print_exc()
              return None
+    def black_scholes_merton(self, S, K, T, r, sigma, option_type="call"):
+        if T < 0: T = 0 # Handle expired options (intrinsic value)
+        if sigma <= 0: sigma = 1e-6 # Prevent division by zero, use tiny volatility
+        if S <=0 or K <= 0: return np.nan # Prices must be positive
 
+        # Handle immediate expiration
+        if T == 0:
+            if option_type.lower() == "call":
+                return max(0.0, S - K)
+            elif option_type.lower() == "put":
+                return max(0.0, K - S)
+            else:
+                return np.nan # Invalid option type
+
+        # Calculate d1 and d2
+        d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+        d2 = d1 - sigma * np.sqrt(T)
+
+        try:
+            if option_type.lower() == "call":
+                price = S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
+            elif option_type.lower() == "put":
+                price = K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
+            else:
+                print(f"Warning: Invalid option type '{option_type}' in BSM.")
+                return np.nan
+            return max(0.0, price) # Price cannot be negative
+        except OverflowError:
+            print("Warning: Overflow encountered in BSM calculation. Inputs might be extreme.")
+            return np.nan
+        except Exception as e:
+            print(f"Error in BSM calculation: {e}")
+            return np.nan
     
     
     
