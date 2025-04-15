@@ -66,8 +66,34 @@ st.sidebar.markdown("---")
 st.sidebar.info("Built with Streamlit & yfinance")
 
 
+if 'stock_data' in st.session_state and st.session_state.stock_data:
+    current_ticker = st.session_state.stock_data['ticker']
+    st.sidebar.success(f"Current Ticker: **{current_ticker}**")
+else:
+    st.sidebar.warning("No ticker data loaded.")
 
+if app_mode == "Get Quote":
+    st.title("📊 Stock Quote & Data")
+    st.markdown("Enter a stock ticker symbol to fetch its current data, volatility, and company information.")
 
+    # Ticker Input Form
+    with st.form("ticker_form"):
+        ticker_input = st.text_input("Ticker Symbol", placeholder="e.g., AAPL, MSFT, GOOGL").upper()
+        submitted = st.form_submit_button("Fetch Data")
 
+        if submitted and ticker_input:
+            analyzer = st.session_state.analyzer
+            with st.spinner(f"Fetching data for {ticker_input}..."):
+                stock_data = analyzer.get_stock_data(ticker_input)
+                # Update risk-free rate after potential fetch
+                analyzer.get_risk_free_rate()
+
+            if stock_data:
+                st.session_state.stock_data = stock_data # Store in session state
+                st.success(f"Data loaded for {stock_data['info'].get('shortName', ticker_input)} ({ticker_input})")
+            else:
+                st.error(f"Could not fetch data for ticker: {ticker_input}. Please check the symbol.")
+                if 'stock_data' in st.session_state:
+                     del st.session_state.stock_data # Clear old data on failure
 
 
