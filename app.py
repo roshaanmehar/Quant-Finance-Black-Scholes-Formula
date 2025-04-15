@@ -55,4 +55,16 @@ def display_stock_info(stock_data):
         st.metric("Risk-Free Rate", f"{st.session_state.analyzer.risk_free_rate*100:.2f}% (10Y Treasury)")
 
 
+st.sidebar.title("Navigation")
+app_mode = st.sidebar.radio(
+    "Choose Analysis:",
+    ("Get Quote", "Simple Option Price", "Options Chain Analysis", "Strategy Analysis")
+)
+
+
+
+
+
+
+
 
