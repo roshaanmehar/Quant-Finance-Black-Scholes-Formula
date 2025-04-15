@@ -7,6 +7,69 @@ import datetime as dt
 from scipy.stats import norm #for statistical calculations and functions
 from tabulate import tabulate #to tabulate data in the console
 
+def get_simple_option_price(ticker, option_type="both", strike_type="atm"):
+    """
+    Get a simple option price for a specified ticker
+    
+    Parameters:
+    ticker: Stock ticker symbol
+    option_type: "call", "put", or "both"
+    strike_type: "atm" (at-the-money), or a specific price
+    
+    Returns:
+    Option price(s)
+    """
+    stock_data = get_stock_data(ticker)
+    if not stock_data:
+        return
+    
+    current_price = stock_data['current_price']
+    volatility = stock_data['volatility']
+    expirations = stock_data['expirations']
+    stock = stock_data['ticker_object']
+    
+    # Get risk-free rate
+    risk_free_rate = get_risk_free_rate()
+    
+    if not expirations:
+        print("No options data available for this ticker.")
+        return
+    
+    # Use the nearest expiration date
+    expiration_date = expirations[0]
+    print(f"Using expiration date: {expiration_date}")
+    
+    # Calculate time to expiration in years
+    today = dt.datetime.now().date()
+    exp_date = dt.datetime.strptime(expiration_date, '%Y-%m-%d').date()
+    days_to_expiration = (exp_date - today).days
+    T = days_to_expiration / 365
+    
+    # Determine strike price
+    if strike_type == "atm":
+        strike = round(current_price / 5) * 5  # Round to nearest $5 increment
+    else:
+        try:
+            strike = float(strike_type)
+        except:
+            strike = current_price  # Default to current price if invalid input
+    
+    # Calculate option prices
+    call_price = black_scholes_merton(current_price, strike, T, risk_free_rate, volatility, "call")
+    put_price = black_scholes_merton(current_price, strike, T, risk_free_rate, volatility, "put")
+    
+    if option_type.lower() == "call":
+        print(f"Call option price for {ticker} at strike ${strike:.2f}: ${call_price:.2f}")
+        return call_price
+    elif option_type.lower() == "put":
+        print(f"Put option price for {ticker} at strike ${strike:.2f}: ${put_price:.2f}")
+        return put_price
+    else:
+        print(f"Option prices for {ticker} at strike ${strike:.2f}:")
+        print(f"Call: ${call_price:.2f}")
+        print(f"Put: ${put_price:.2f}")
+        return {"call": call_price, "put": put_price}
+
 def get_stock_data(ticker):
     """Fetch stock data and options chain using Yahoo Finance API"""
     try:
