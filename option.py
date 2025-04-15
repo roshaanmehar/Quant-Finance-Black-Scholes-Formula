@@ -7,7 +7,39 @@ import datetime as dt
 from scipy.stats import norm #for statistical calculations and functions
 from tabulate import tabulate #to tabulate data in the console
 
+def main():
+    while True:
+        print("\n===== Options Analysis Tool =====")
+        print("1. Calculate full options chain")
+        print("2. Get simple option price")
+        print("3. Calculate option Greeks")
+        print("4. Calculate implied volatility")
+        print("5. Exit")
+        
+        choice = input("\nEnter your choice (1-5): ")
+        
+        if choice == "1":
+            ticker = input("Enter stock ticker symbol (e.g., AAPL): ").upper()
+            calculate_options_chain(ticker)
+        elif choice == "2":
+            ticker = input("Enter stock ticker symbol: ").upper()
+            option_type = input("Option type (call/put/both): ").lower() or "both"
+            strike_input = input("Strike price (enter 'atm' for at-the-money or a specific price): ").lower() or "atm"
+            get_simple_option_price(ticker, option_type, strike_input)
+        elif choice == "3":
+            # Add code for calculating Greeks for a specific option
+            pass
+        elif choice == "4":
+            # Add code for calculating implied volatility
+            pass
+        elif choice == "5":
+            print("Exiting program. Goodbye!")
+            break
+        else:
+            print("Invalid choice. Please try again.")
 
+if __name__ == "__main__":
+    main()
 
 def calculate_implied_volatility(S, K, T, r, market_price, option_type="call", precision=0.0001):
     """
