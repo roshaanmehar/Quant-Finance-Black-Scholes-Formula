@@ -6,6 +6,39 @@ import yfinance as yf #for fetching financial data from yahoo finance api
 import datetime as dt 
 from scipy.stats import norm #for statistical calculations and functions
 from tabulate import tabulate #to tabulate data in the console
+def visualize_options_chain(df, current_price):
+    """
+    Visualize the options chain using matplotlib
+    """
+    import matplotlib.pyplot as plt
+    
+    # Create a figure with two subplots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    
+    # Plot call prices
+    ax1.plot(df['Strike'], df['BSM Call'], 'b-', label='BSM Model')
+    if 'Market Call' in df.columns and not df['Market Call'].isna().all():
+        ax1.scatter(df['Strike'], df['Market Call'], color='r', label='Market')
+    ax1.axvline(x=current_price, color='g', linestyle='--', label='Current Price')
+    ax1.set_title('Call Option Prices')
+    ax1.set_xlabel('Strike Price')
+    ax1.set_ylabel('Option Price')
+    ax1.legend()
+    ax1.grid(True)
+    
+    # Plot put prices
+    ax2.plot(df['Strike'], df['BSM Put'], 'b-', label='BSM Model')
+    if 'Market Put' in df.columns and not df['Market Put'].isna().all():
+        ax2.scatter(df['Strike'], df['Market Put'], color='r', label='Market')
+    ax2.axvline(x=current_price, color='g', linestyle='--', label='Current Price')
+    ax2.set_title('Put Option Prices')
+    ax2.set_xlabel('Strike Price')
+    ax2.set_ylabel('Option Price')
+    ax2.legend()
+    ax2.grid(True)
+    
+    plt.tight_layout()
+    plt.show()
 
 def main():
     while True:
