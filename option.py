@@ -7,6 +7,51 @@ import datetime as dt
 from scipy.stats import norm #for statistical calculations and functions
 from tabulate import tabulate #to tabulate data in the console
 
+def calculate_option_greeks(S, K, T, r, sigma, option_type="call"):
+    """
+    Calculate option Greeks using Black-Scholes-Merton model
+    
+    Returns:
+    Dictionary with Delta, Gamma, Theta, Vega, Rho
+    """
+    d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+    d2 = d1 - sigma * np.sqrt(T)
+    
+    # Delta - sensitivity to underlying price change
+    if option_type.lower() == "call":
+        delta = norm.cdf(d1)
+    else:
+        delta = norm.cdf(d1) - 1
+    
+    # Gamma - rate of change of Delta
+    gamma = norm.pdf(d1) / (S * sigma * np.sqrt(T))
+    
+    # Theta - sensitivity to time decay (per day)
+    part1 = -S * norm.pdf(d1) * sigma / (2 * np.sqrt(T))
+    if option_type.lower() == "call":
+        part2 = -r * K * np.exp(-r * T) * norm.cdf(d2)
+        theta = (part1 + part2) / 365  # Convert to daily
+    else:
+        part2 = r * K * np.exp(-r * T) * norm.cdf(-d2)
+        theta = (part1 + part2) / 365  # Convert to daily
+    
+    # Vega - sensitivity to volatility change (for 1% change)
+    vega = S * np.sqrt(T) * norm.pdf(d1) / 100
+    
+    # Rho - sensitivity to interest rate change (for 1% change)
+    if option_type.lower() == "call":
+        rho = K * T * np.exp(-r * T) * norm.cdf(d2) / 100
+    else:
+        rho = -K * T * np.exp(-r * T) * norm.cdf(-d2) / 100
+    
+    return {
+        "delta": delta,
+        "gamma": gamma,
+        "theta": theta,
+        "vega": vega,
+        "rho": rho
+    }
+
 def get_simple_option_price(ticker, option_type="both", strike_type="atm"):
     """
     Get a simple option price for a specified ticker
