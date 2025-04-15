@@ -7,6 +7,66 @@ import datetime as dt
 from scipy.stats import norm #for statistical calculations and functions
 from tabulate import tabulate #to tabulate data in the console
 
+
+class OptionsAnalyzer:
+    def __init__(self):
+        """Initialize the Options Analyzer with default parameters"""
+        self.current_ticker = None
+        self.current_stock_data = None
+        self.risk_free_rate = None
+        self.config = self._load_config()
+        self.favorite_tickers = self._load_favorite_tickers()
+        # Fetch initial risk-free rate
+        self.get_risk_free_rate()
+    
+    def _load_config(self):
+        """Load configuration from file or use defaults."""
+        default_config = {
+            'volatility_days': 252,  # Trading days for annualization
+            'default_risk_free_rate': 0.04,  # 4% fallback
+            'show_greeks_in_chain': True,
+            'max_strikes_chain': 15,  # Max strikes around ATM in chain display
+            'iv_precision': 0.0001,  # Precision for implied volatility calculation
+            'iv_max_iterations': 100, # Max iterations for IV calculation
+            'strategy_price_range': 0.3, # +/- 30% range for payoff diagrams
+            'debug_mode': False
+        }
+        config_path = 'options_config.json'
+        try:
+            if os.path.exists(config_path):
+                with open(config_path, 'r') as f:
+                    config = json.load(f)
+                    # Add any missing keys from default config
+                    for key, value in default_config.items():
+                        if key not in config:
+                            config[key] = value
+                    print("Configuration loaded.")
+                    return config
+            else:
+                print("No config file found, using defaults.")
+                return default_config
+        except json.JSONDecodeError:
+            print(f"Error reading config file '{config_path}'. Using defaults.")
+            return default_config
+        except Exception as e:
+            print(f"Error loading config: {e}. Using defaults.")
+            return default_config
+
+    def _save_config(self):
+        """Save configuration to file."""
+        config_path = 'options_config.json'
+        try:
+            with open(config_path, 'w') as f:
+                json.dump(self.config, f, indent=4)
+            print("Configuration saved successfully.")
+        except Exception as e:
+            print(f"Error saving configuration to '{config_path}': {e}")
+
+
+
+
+
+
 def validate_ticker(ticker):
     """Validate if the ticker exists"""
     try:
