@@ -180,3 +180,65 @@ elif app_mode == "Simple Option Price":
                                   gp1.metric("Theta", f"{format_currency(greeks_put['theta'], currency)} / day")
                                   gp2.metric("Vega", f"{format_currency(greeks_put['vega'], currency)} / 1% vol")
                                   gp2.metric("Rho", f"{format_currency(greeks_put['rho'], currency)} / 1% rate")
+elif app_mode == "Options Chain Analysis":
+    st.title("⛓️ Options Chain Analysis")
+    st.markdown("View the options chain for a selected expiration date, comparing market prices with BSM calculations and implied volatility.")
+
+    if 'stock_data' not in st.session_state or not st.session_state.stock_data:
+        st.warning("Please fetch stock data first using the 'Get Quote' section.")
+    else:
+        stock_data = st.session_state.stock_data
+        analyzer = st.session_state.analyzer
+        expirations = stock_data['expirations']
+        currency = stock_data['currency']
+
+        if not expirations:
+             st.error(f"No options expiration dates found for {stock_data['ticker']}.")
+        else:
+            col1, col2 = st.columns([1,3]) # Make selection smaller
+            with col1:
+                 expiration_date = st.selectbox("Select Expiration Date", options=expirations, key="chain_exp_select")
+                 calc_button = st.button("Calculate Chain", key="chain_calc_button")
+
+            if calc_button:
+                 with st.spinner(f"Calculating options chain for {expiration_date}..."):
+                      # Use a slightly modified call or internal logic for Streamlit
+                      # For simplicity, we can reuse the existing method if prints are acceptable during calculation phase
+                      # or modify it further to avoid prints.
+                      chain_df = analyzer.calculate_options_chain() # Assuming console prints are OK for now
+
+                 if chain_df is not None and not chain_df.empty:
+                      st.session_state.chain_df = chain_df # Store for potential visualization
+                      st.session_state.chain_exp_date = expiration_date # Store date for vis title
+                      st.success(f"Options chain loaded for {expiration_date}.")
+
+                      # Display the chain (using formatting similar to console version if possible)
+                      st.subheader(f"Options Chain: {stock_data['ticker']} - {expiration_date}")
+
+                      # Simplified display for Streamlit - can be enhanced
+                      st.dataframe(chain_df.style.format({ # Basic formatting
+                           'strike': lambda x: format_currency(x, currency),
+                           'bsm_call': lambda x: format_currency(x, currency),
+                           'market_call': lambda x: format_currency(x, currency),
+                           'call_iv': '{:.2f}%',
+                           'bsm_put': lambda x: format_currency(x, currency),
+                           'market_put': lambda x: format_currency(x, currency),
+                           'put_iv': '{:.2f}%',
+                           # Add formatting for greeks if shown
+                      }, na_rep='N/A'), height=500)
+
+
+                 else:
+                      st.error(f"Could not calculate options chain for {expiration_date}.")
+                      if 'chain_df' in st.session_state: del st.session_state.chain_df # Clear old data
+
+            # Option to visualize the currently loaded chain
+            if 'chain_df' in st.session_state and st.session_state.chain_df is not None:
+                 if st.button("Visualize Options Chain", key="chain_viz_button"):
+                      with st.spinner("Generating visualization..."):
+                           chain_df_to_plot = st.session_state.chain_df
+                           current_price = stock_data['current_price']
+                           exp_date_for_plot = st.session_state.chain_exp_date
+                           # Call the refactored visualization function that returns a figure
+                           fig = analyzer.visualize_options_chain(chain_df_to_plot, current_price, currency, exp_date_for_plot)
+                           st.pyplot(fig)
