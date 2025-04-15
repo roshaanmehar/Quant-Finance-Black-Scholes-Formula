@@ -321,6 +321,49 @@ class OptionsAnalyzer:
         print(f"Using default risk-free rate: {default_rate:.4f} ({default_rate*100:.2f}%)")
         self.risk_free_rate = default_rate
         return default_rate
+    def _get_option_data_for_strike(self, expiration_date, strike, option_type):
+         """Helper to get specific option data (call or put) for a strike."""
+         if not self.current_stock_data or not self.current_stock_data.get('ticker_object'):
+             print("Error: Stock data not loaded.")
+             return None
+         if not expiration_date:
+              print("Error: Expiration date required.")
+              return None
+
+         stock = self.current_stock_data['ticker_object']
+         option_type = option_type.lower()
+
+         try:
+             opt_chain = stock.option_chain(expiration_date)
+             data = opt_chain.calls if option_type == 'call' else opt_chain.puts
+
+             # Find the specific strike row
+             option_data = data[data['strike'] == strike]
+
+             if option_data.empty:
+                 print(f"Warning: No {option_type} data found for strike {strike} on {expiration_date}.")
+                 # Could try finding the closest strike as a fallback here if desired
+                 return None
+
+             # Return the first row if multiple contracts match (shouldn't happen for std options)
+             return option_data.iloc[0]
+
+         except IndexError: # Handle cases where yfinance might return unexpected empty structures
+              print(f"Error: No options data available for {self.current_ticker} on {expiration_date}.")
+              return None
+         except Exception as e:
+             print(f"Error fetching option data for strike {strike} ({option_type}): {e}")
+             if self.config['debug_mode']:
+                 import traceback
+                 traceback.print_exc()
+             return None
+
+    
+    
+    
+    
+    
+    
 def validate_ticker(ticker):
     """Validate if the ticker exists"""
     try:
