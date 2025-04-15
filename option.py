@@ -1524,7 +1524,71 @@ class OptionsAnalyzer:
              print(f"Favorites: {fav_str}")
              
              
-             
+     def run(self):
+        """Main application loop."""
+        while True:
+            self.display_main_menu()
+            choice = input("Enter your choice: ")
+
+            if choice == '1':
+                # Ask for ticker, suggest current or favorites
+                prompt = "Enter ticker symbol"
+                if self.current_ticker:
+                     prompt += f" (Enter for '{self.current_ticker}'"
+                     if self.favorite_tickers:
+                          prompt += f", or type fav)"
+                     else:
+                          prompt += ")"
+                elif self.favorite_tickers:
+                     prompt += " (or type fav)"
+
+                ticker_input = input(f"{prompt}: ").upper().strip()
+
+                selected_ticker = None
+                if not ticker_input and self.current_ticker:
+                     selected_ticker = self.current_ticker # Keep current
+                     print(f"Keeping current ticker: {selected_ticker}")
+                     # Re-fetch data in case it's stale? Optional. For now, just keep.
+                     # self.get_stock_data(selected_ticker)
+                elif ticker_input == 'FAV' and self.favorite_tickers:
+                     print("\nFavorites:")
+                     for i, fav in enumerate(self.favorite_tickers):
+                          print(f" {i+1}. {fav}")
+                     fav_choice = input("Select favorite number: ")
+                     try:
+                          idx = int(fav_choice) - 1
+                          if 0 <= idx < len(self.favorite_tickers):
+                               selected_ticker = self.favorite_tickers[idx]
+                          else:
+                               print("Invalid favorite number.")
+                     except ValueError:
+                          print("Invalid input.")
+                elif ticker_input:
+                      selected_ticker = ticker_input
+
+                if selected_ticker:
+                    self.get_stock_data(selected_ticker) # Fetch/update data
+                elif not ticker_input and not self.current_ticker:
+                     print("No ticker entered.")
+
+
+            elif choice == '2':
+                self.get_simple_option_price()
+            elif choice == '3':
+                self.calculate_options_chain()
+            elif choice == '4':
+                 self.analyze_strategy()
+            elif choice == '5':
+                 self.manage_favorites()
+            elif choice == '6':
+                 self.manage_settings()
+            elif choice == '0':
+                print("Exiting Options Analyzer. Goodbye!")
+                break
+            else:
+                print("Invalid choice. Please try again.")
+
+            input("\nPress Enter to return to the Main Menu...")        
              
              
 def validate_ticker(ticker):
