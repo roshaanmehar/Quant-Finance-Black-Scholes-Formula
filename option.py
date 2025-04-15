@@ -390,7 +390,66 @@ class OptionsAnalyzer:
         except Exception as e:
             print(f"Error in BSM calculation: {e}")
             return np.nan
-    
+    def calculate_option_greeks(self, S, K, T, r, sigma, option_type="call"):
+        """
+        Calculate option Greeks using Black-Scholes-Merton model.
+
+        Returns: Dictionary with Delta, Gamma, Theta, Vega, Rho or None if inputs invalid.
+        """
+        greeks = { "delta": np.nan, "gamma": np.nan, "theta": np.nan, "vega": np.nan, "rho": np.nan }
+        # Input validation
+        if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
+            # For expired options, some greeks might be definable, but returning NaN is safer.
+            # Delta might be 1 or 0 for calls, -1 or 0 for puts. Others usually 0.
+            # We return NaNs to indicate the model doesn't apply well at expiration.
+            return greeks
+
+        option_type = option_type.lower()
+
+        try:
+            d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+            d2 = d1 - sigma * np.sqrt(T)
+            sqrt_T = np.sqrt(T)
+            pdf_d1 = norm.pdf(d1)
+
+            # Gamma - rate of change of Delta (same for calls and puts)
+            greeks["gamma"] = pdf_d1 / (S * sigma * sqrt_T) if (S * sigma * sqrt_T) != 0 else 0
+
+            # Vega - sensitivity to volatility change (per 1% change)
+            greeks["vega"] = (S * sqrt_T * pdf_d1) / 100
+
+            # Delta - sensitivity to underlying price change
+            if option_type == "call":
+                greeks["delta"] = norm.cdf(d1)
+                # Theta - sensitivity to time decay (per day)
+                term1 = - (S * pdf_d1 * sigma) / (2 * sqrt_T)
+                term2 = - r * K * np.exp(-r * T) * norm.cdf(d2)
+                greeks["theta"] = (term1 + term2) / 365  # Convert annual theta to daily
+                # Rho - sensitivity to interest rate change (per 1% change)
+                greeks["rho"] = (K * T * np.exp(-r * T) * norm.cdf(d2)) / 100
+            elif option_type == "put":
+                greeks["delta"] = norm.cdf(d1) - 1
+                # Theta
+                term1 = - (S * pdf_d1 * sigma) / (2 * sqrt_T)
+                term2 = + r * K * np.exp(-r * T) * norm.cdf(-d2) # Note the '+' sign
+                greeks["theta"] = (term1 + term2) / 365 # Convert annual theta to daily
+                # Rho
+                greeks["rho"] = (-K * T * np.exp(-r * T) * norm.cdf(-d2)) / 100
+            else:
+                print(f"Warning: Invalid option type '{option_type}' for Greeks.")
+                return {k: np.nan for k in greeks}
+
+            return greeks
+
+        except ZeroDivisionError:
+            print("Warning: Division by zero encountered in Greeks calculation (likely T or sigma is zero).")
+            return {k: 0.0 for k in greeks} # Return zeros in this edge case
+        except OverflowError:
+            print("Warning: Overflow encountered in Greeks calculation. Inputs might be extreme.")
+            return {k: np.nan for k in greeks}
+        except Exception as e:
+            print(f"Error calculating Greeks: {e}")
+            return {k: np.nan for k in greeks}
     
     
     
