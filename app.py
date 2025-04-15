@@ -29,7 +29,30 @@ def format_currency(value, currency='USD'):
         return "N/A"
     
     
-    
+def display_stock_info(stock_data):
+    """Displays formatted stock information."""
+    info = stock_data.get('info', {})
+    currency = stock_data.get('currency', 'USD')
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Current Price", format_currency(stock_data['current_price'], currency))
+        st.metric("Sector", info.get('sector', 'N/A'))
+    with col2:
+        if stock_data.get('volatility') is not None:
+             st.metric("Hist. Volatility (1Y)", f"{stock_data['volatility']*100:.2f}%")
+        else:
+             st.metric("Hist. Volatility (1Y)", "N/A")
+        st.metric("Industry", info.get('industry', 'N/A'))
+    with col3:
+        market_cap = info.get('marketCap')
+        mc_str = "N/A"
+        if market_cap:
+            if market_cap >= 1e12: mc_str = f"{format_currency(market_cap / 1e12, currency)}T"
+            elif market_cap >= 1e9: mc_str = f"{format_currency(market_cap / 1e9, currency)}B"
+            elif market_cap >= 1e6: mc_str = f"{format_currency(market_cap / 1e6, currency)}M"
+            else: mc_str = format_currency(market_cap, currency)
+        st.metric("Market Cap", mc_str)
+        st.metric("Risk-Free Rate", f"{st.session_state.analyzer.risk_free_rate*100:.2f}% (10Y Treasury)")
 
 
 
