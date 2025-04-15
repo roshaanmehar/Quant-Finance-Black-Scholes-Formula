@@ -1395,7 +1395,59 @@ class OptionsAnalyzer:
                   import traceback
                   traceback.print_exc()
     
-    
+    def manage_favorites(self):
+        """Manage the list of favorite tickers."""
+        while True:
+            self.clear_screen()
+            print("--- Manage Favorite Tickers ---")
+            if not self.favorite_tickers:
+                print("No favorite tickers saved.")
+            else:
+                print("Current Favorites:")
+                for i, ticker in enumerate(self.favorite_tickers):
+                    print(f" {i+1}. {ticker}")
+
+            print("\nOptions:")
+            print(" 1. Add Ticker")
+            print(" 2. Remove Ticker")
+            print(" 0. Back to Main Menu")
+
+            choice = input("Enter option: ")
+
+            if choice == '1':
+                ticker_to_add = input("Enter ticker symbol to add: ").upper().strip()
+                if ticker_to_add and self.validate_ticker(ticker_to_add):
+                    if ticker_to_add not in self.favorite_tickers:
+                        self.favorite_tickers.append(ticker_to_add)
+                        self.favorite_tickers.sort() # Keep list sorted
+                        self._save_favorite_tickers()
+                        print(f"'{ticker_to_add}' added to favorites.")
+                    else:
+                        print(f"'{ticker_to_add}' is already in favorites.")
+                elif ticker_to_add:
+                     print(f"Could not validate '{ticker_to_add}'. Not added.")
+                input("Press Enter to continue...")
+            elif choice == '2':
+                if not self.favorite_tickers:
+                    print("No favorites to remove.")
+                    input("Press Enter to continue...")
+                    continue
+                try:
+                    num_to_remove = int(input("Enter the number of the ticker to remove: "))
+                    if 1 <= num_to_remove <= len(self.favorite_tickers):
+                        removed_ticker = self.favorite_tickers.pop(num_to_remove - 1)
+                        self._save_favorite_tickers()
+                        print(f"'{removed_ticker}' removed from favorites.")
+                    else:
+                        print("Invalid number.")
+                except ValueError:
+                    print("Invalid input. Please enter a number.")
+                input("Press Enter to continue...")
+            elif choice == '0':
+                break
+            else:
+                print("Invalid option.")
+                input("Press Enter to continue...")
     
     
 def validate_ticker(ticker):
