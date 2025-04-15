@@ -675,7 +675,249 @@ class OptionsAnalyzer:
                 print(f"    Rho:   {self._format_currency(g['rho'], currency)} / 1% rate")
             print("-" * 25)
     
-    
+    def calculate_options_chain(self):
+        """Calculate and display a detailed options chain for a selected expiration."""
+        if self.current_stock_data is None:
+            print("\nPlease fetch stock data first (Option 1).")
+            ticker = input("Enter stock ticker symbol: ").upper()
+            if not ticker: return
+            if not self.get_stock_data(ticker):
+                return # Exit if fetching fails
+        else:
+             print(f"\nCurrent ticker: {self.current_ticker}")
+             change_ticker = input("Fetch data for a different ticker? (y/n, default n): ").lower()
+             if change_ticker == 'y':
+                  ticker = input("Enter new stock ticker symbol: ").upper()
+                  if not ticker: return
+                  if not self.get_stock_data(ticker):
+                       return # Exit if fetching fails
+
+        # Use currently loaded data
+        stock_data = self.current_stock_data
+        if not stock_data:
+             print("Error: Stock data is not available.")
+             return
+
+        current_price = stock_data['current_price']
+        volatility = stock_data['volatility']
+        expirations = stock_data['expirations']
+        stock = stock_data['ticker_object']
+        currency = stock_data['currency']
+
+        if volatility is None:
+             print("\nWarning: Historical volatility is not available. BSM prices will be based on zero volatility unless you provide one.")
+             try:
+                  user_vol = float(input("Enter an estimated annual volatility (e.g., 0.3 for 30%) or press Enter to use 0: "))
+                  volatility = user_vol if user_vol > 0 else 1e-6
+             except ValueError:
+                  print("Invalid input. Using 0 volatility.")
+                  volatility = 1e-6
+
+        if self.risk_free_rate is None:
+             risk_free_rate = self.get_risk_free_rate()
+        else:
+             risk_free_rate = self.risk_free_rate
+
+        # Select Expiration
+        expiration_date = self._select_expiration_date(expirations)
+        if not expiration_date:
+            return
+
+        # Calculate time to expiration
+        today = dt.datetime.now().date()
+        exp_date = dt.datetime.strptime(expiration_date, '%Y-%m-%d').date()
+        days_to_expiration = max(0, (exp_date - today).days)
+        T = days_to_expiration / 365.0
+        print(f"Time to expiration (T): {T:.4f} years")
+
+        # --- Fetch Option Chain Data ---
+        try:
+            print("\nFetching options chain data from yfinance...")
+            options = stock.option_chain(expiration_date)
+            calls = options.calls
+            puts = options.puts
+
+            if calls.empty and puts.empty:
+                 print(f"No options data found for {self.current_ticker} on {expiration_date}.")
+                 return None # Indicate no data found
+
+            print("Calculating BSM prices, IV, and Greeks...")
+
+            # Combine calls and puts for easier processing
+            calls = calls.add_prefix('call_')
+            puts = puts.add_prefix('put_')
+            # Ensure strike columns have same name for merging
+            calls = calls.rename(columns={'call_strike': 'strike'})
+            puts = puts.rename(columns={'put_strike': 'strike'})
+
+            # Merge call and put data on strike price
+            # Use outer merge to keep all strikes even if one side is missing
+            chain_df = pd.merge(calls, puts, on='strike', how='outer')
+            chain_df = chain_df.sort_values(by='strike').reset_index(drop=True)
+
+            # --- Limit Strikes Around ATM ---
+            max_strikes = self.config['max_strikes_chain']
+            if len(chain_df) > max_strikes:
+                atm_index = chain_df.iloc[(chain_df['strike'] - current_price).abs().argsort()[:1]].index[0]
+                half_width = max_strikes // 2
+                start_idx = max(0, atm_index - half_width)
+                end_idx = min(len(chain_df), start_idx + max_strikes)
+                # Adjust if we hit the upper bound and didn't get enough rows
+                if (end_idx - start_idx) < max_strikes:
+                     start_idx = max(0, end_idx - max_strikes)
+
+                chain_df = chain_df.iloc[start_idx:end_idx].reset_index(drop=True)
+                print(f"\nDisplaying {len(chain_df)} strikes around current price {self._format_currency(current_price, currency)}")
+
+            # --- Calculate BSM, IV, Greeks ---
+            results = []
+            total_strikes = len(chain_df)
+            for idx, row in chain_df.iterrows():
+                # Progress indicator
+                print(f"\rProcessing strike {idx+1}/{total_strikes}...", end="")
+
+                strike = row['strike']
+                data = {'strike': strike}
+
+                # Call Calculations
+                market_call = row.get('call_lastPrice')
+                if pd.notna(market_call):
+                     data['market_call'] = market_call
+                     call_iv = self.calculate_implied_volatility(current_price, strike, T, risk_free_rate, market_call, "call")
+                     data['call_iv'] = call_iv * 100 if pd.notna(call_iv) else np.nan
+                     # Use IV for BSM if available, else use historical/input vol
+                     vol_to_use_call = call_iv if pd.notna(call_iv) else volatility
+                     data['bsm_call'] = self.black_scholes_merton(current_price, strike, T, risk_free_rate, vol_to_use_call, "call")
+                     data['call_diff'] = market_call - data['bsm_call'] if pd.notna(data['bsm_call']) else np.nan
+                     if self.config['show_greeks_in_chain']:
+                          greeks = self.calculate_option_greeks(current_price, strike, T, risk_free_rate, vol_to_use_call, "call")
+                          data['call_delta'] = greeks['delta']
+                          data['call_gamma'] = greeks['gamma']
+                          data['call_theta'] = greeks['theta']
+                          data['call_vega'] = greeks['vega']
+                else:
+                    # Calculate BSM using historical/input vol if no market price
+                    data['bsm_call'] = self.black_scholes_merton(current_price, strike, T, risk_free_rate, volatility, "call")
+                    if self.config['show_greeks_in_chain']:
+                         greeks = self.calculate_option_greeks(current_price, strike, T, risk_free_rate, volatility, "call")
+                         data['call_delta'] = greeks['delta']
+                         data['call_gamma'] = greeks['gamma']
+                         data['call_theta'] = greeks['theta']
+                         data['call_vega'] = greeks['vega']
+
+                # Put Calculations (similar logic)
+                market_put = row.get('put_lastPrice')
+                if pd.notna(market_put):
+                     data['market_put'] = market_put
+                     put_iv = self.calculate_implied_volatility(current_price, strike, T, risk_free_rate, market_put, "put")
+                     data['put_iv'] = put_iv * 100 if pd.notna(put_iv) else np.nan
+                     vol_to_use_put = put_iv if pd.notna(put_iv) else volatility
+                     data['bsm_put'] = self.black_scholes_merton(current_price, strike, T, risk_free_rate, vol_to_use_put, "put")
+                     data['put_diff'] = market_put - data['bsm_put'] if pd.notna(data['bsm_put']) else np.nan
+                     if self.config['show_greeks_in_chain']:
+                          greeks = self.calculate_option_greeks(current_price, strike, T, risk_free_rate, vol_to_use_put, "put")
+                          data['put_delta'] = greeks['delta']
+                          data['put_gamma'] = greeks['gamma']
+                          data['put_theta'] = greeks['theta']
+                          data['put_vega'] = greeks['vega']
+                else:
+                    data['bsm_put'] = self.black_scholes_merton(current_price, strike, T, risk_free_rate, volatility, "put")
+                    if self.config['show_greeks_in_chain']:
+                         greeks = self.calculate_option_greeks(current_price, strike, T, risk_free_rate, volatility, "put")
+                         data['put_delta'] = greeks['delta']
+                         data['put_gamma'] = greeks['gamma']
+                         data['put_theta'] = greeks['theta']
+                         data['put_vega'] = greeks['vega']
+
+
+                # Add other interesting data if needed (volume, open interest)
+                data['call_volume'] = row.get('call_volume', 0)
+                data['call_oi'] = row.get('call_openInterest', 0)
+                data['put_volume'] = row.get('put_volume', 0)
+                data['put_oi'] = row.get('put_openInterest', 0)
+
+                results.append(data)
+
+            print("\r" + " " * 40 + "\rProcessing complete.") # Clear progress line
+
+            results_df = pd.DataFrame(results)
+
+             # --- Display Results ---
+            pd.options.display.float_format = '{:,.2f}'.format # Nicer number formatting
+
+            # Define columns to display
+            call_cols_basic = ['call_volume', 'call_oi', 'market_call', 'bsm_call', 'call_iv']
+            put_cols_basic = ['put_iv', 'bsm_put', 'market_put', 'put_oi', 'put_volume']
+            strike_col = ['strike']
+
+            call_cols_greeks = ['call_delta', 'call_gamma', 'call_theta', 'call_vega']
+            put_cols_greeks = ['put_delta', 'put_gamma', 'put_theta', 'put_vega']
+
+            display_cols = call_cols_basic + strike_col + put_cols_basic
+            if self.config['show_greeks_in_chain']:
+                 # Interleave greeks for better comparison
+                 display_cols = ['call_volume', 'call_oi', 'market_call', 'bsm_call', 'call_iv', 'call_delta', 'call_gamma', 'call_theta', 'call_vega',
+                                 'strike',
+                                 'put_delta', 'put_gamma', 'put_theta', 'put_vega', 'put_iv', 'bsm_put', 'market_put', 'put_oi', 'put_volume']
+
+
+            # Filter df to only include desired columns in the right order
+            display_df = results_df[[col for col in display_cols if col in results_df.columns]].copy()
+
+            # Custom formatting for the table
+            formatters = {}
+            currency_cols = ['market_call', 'bsm_call', 'call_diff', 'market_put', 'bsm_put', 'put_diff', 'strike', 'call_theta', 'put_theta', 'call_vega', 'put_vega']
+            percent_cols = ['call_iv', 'put_iv']
+            greek_cols = ['call_delta', 'call_gamma', 'put_delta', 'put_gamma']
+            int_cols = ['call_volume', 'call_oi', 'put_volume', 'put_oi']
+
+            for col in display_df.columns:
+                 if col in currency_cols:
+                       formatters[col] = lambda x, c=currency: self._format_currency(x, c) if pd.notna(x) else 'N/A'
+                 elif col in percent_cols:
+                       formatters[col] = lambda x: f"{x:.2f}%" if pd.notna(x) else 'N/A'
+                 elif col in greek_cols:
+                       formatters[col] = lambda x: f"{x:.4f}" if pd.notna(x) else 'N/A'
+                 elif col in int_cols:
+                       formatters[col] = lambda x: f"{int(x):,}" if pd.notna(x) and x!=0 else ('0' if x==0 else 'N/A') # Format ints with comma, handle 0 and NaN
+
+            # Rename columns for better display
+            col_rename = {
+                 'call_volume': 'C Vol', 'call_oi': 'C OI', 'market_call': 'C Market', 'bsm_call': 'C BSM', 'call_iv': 'C IV%',
+                 'call_delta': 'C Delta', 'call_gamma': 'C Gamma', 'call_theta': 'C Theta', 'call_vega': 'C Vega',
+                 'strike': 'Strike',
+                 'put_delta': 'P Delta', 'put_gamma': 'P Gamma', 'put_theta': 'P Theta', 'put_vega': 'P Vega',
+                 'put_iv': 'P IV%', 'bsm_put': 'P BSM', 'market_put': 'P Market', 'put_oi': 'P OI', 'put_volume': 'P Vol'
+            }
+            display_df.rename(columns=col_rename, inplace=True)
+
+
+            print(f"\n--- Options Chain for {self.current_ticker} ---")
+            print(f"Expiration: {expiration_date} ({days_to_expiration} days)")
+            print(f"Current Price: {self._format_currency(current_price, currency)}")
+            print(f"Risk-Free Rate: {risk_free_rate*100:.2f}%")
+            print(f"Historical Vol: {volatility*100:.2f}% (used for BSM if IV unavailable)")
+            print("-" * 80)
+
+            # Use tabulate for printing
+            print(tabulate(display_df, headers='keys', tablefmt='psql', showindex=False, floatfmt=".2f", numalign="right", stralign="right")) # , formatters=formatters doesn't work with tabulate directly
+
+            # Ask to visualize
+            visualize = input("\nVisualize this options chain (Price/IV)? (y/n): ").lower()
+            if visualize == 'y':
+                self.visualize_options_chain(results_df, current_price, currency, expiration_date)
+
+            return results_df # Return the raw calculated data
+
+        except AttributeError:
+             print(f"\nError: Could not find options data for {self.current_ticker} on {expiration_date}. The ticker might not have options or data is unavailable.")
+             return None
+        except Exception as e:
+            print(f"\nError calculating options chain: {e}")
+            if self.config['debug_mode']:
+                import traceback
+                traceback.print_exc()
+            return None
     
     
 def validate_ticker(ticker):
