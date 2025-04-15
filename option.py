@@ -97,7 +97,18 @@ class OptionsAnalyzer:
     def clear_screen(self):
         """Clear the console screen."""
         os.system('cls' if os.name == 'nt' else 'clear')
-
+    def _format_currency(self, value, currency='USD'):
+        """Formats a numeric value as currency."""
+        if pd.isna(value):
+            return "N/A"
+        try:
+            if currency == 'USD':
+                return f"${value:,.2f}"
+            # Add other common currency symbols or formats here if needed
+            else:
+                return f"{value:,.2f} {currency}"
+        except (TypeError, ValueError):
+             return "N/A" # Handle non-numeric inputs gracefully
 
 
 
