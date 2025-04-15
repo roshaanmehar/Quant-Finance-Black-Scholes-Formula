@@ -81,6 +81,22 @@ class OptionsAnalyzer:
         except Exception as e:
             print(f"Error loading favorite tickers: {e}. Starting fresh.")
             return []
+        
+    def _save_favorite_tickers(self):
+        """Save favorite tickers to file."""
+        favorites_path = 'favorite_tickers.json'
+        try:
+            with open(favorites_path, 'w') as f:
+                json.dump(self.favorite_tickers, f, indent=4)
+            print("Favorite tickers saved successfully.")
+        except Exception as e:
+            print(f"Error saving favorite tickers to '{favorites_path}': {e}")
+
+    
+
+    def clear_screen(self):
+        """Clear the console screen."""
+        os.system('cls' if os.name == 'nt' else 'clear')
 
 
 
