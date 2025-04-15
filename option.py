@@ -534,6 +534,146 @@ class OptionsAnalyzer:
              # print(f"Warning: IV calculation did not converge sufficiently for K={K}. Market: {market_price:.2f}, Model: {final_price:.2f} at IV {final_vol*100:.2f}%")
              return np.nan # Indicate failure to converge reliably
 
+    def get_simple_option_price(self):
+        """Calculate and display a simple option price based on user input."""
+        if self.current_stock_data is None:
+            print("\nPlease fetch stock data first (Option 1).")
+            ticker = input("Enter stock ticker symbol: ").upper()
+            if not ticker: return
+            if not self.get_stock_data(ticker):
+                return # Exit if fetching fails
+        else:
+             print(f"\nCurrent ticker: {self.current_ticker}")
+             change_ticker = input("Fetch data for a different ticker? (y/n, default n): ").lower()
+             if change_ticker == 'y':
+                  ticker = input("Enter new stock ticker symbol: ").upper()
+                  if not ticker: return
+                  if not self.get_stock_data(ticker):
+                       return # Exit if fetching fails
+
+        # Use currently loaded data
+        stock_data = self.current_stock_data
+        if not stock_data: # Should not happen if logic above is correct, but safety check
+             print("Error: Stock data is not available.")
+             return
+
+        current_price = stock_data['current_price']
+        volatility = stock_data['volatility']
+        expirations = stock_data['expirations']
+        stock = stock_data['ticker_object']
+        currency = stock_data['currency']
+
+        if volatility is None:
+             print("Warning: Historical volatility is not available. BSM prices may be inaccurate.")
+             # Optionally, prompt user for a volatility estimate
+             try:
+                  user_vol = float(input("Enter an estimated annual volatility (e.g., 0.3 for 30%) or press Enter to use 0: "))
+                  volatility = user_vol if user_vol > 0 else 1e-6 # Use tiny vol if 0 or negative
+             except ValueError:
+                  print("Invalid input. Using 0 volatility.")
+                  volatility = 1e-6 # Use tiny vol if input error
+
+
+        if self.risk_free_rate is None: # Should have been fetched at init, but check again
+             risk_free_rate = self.get_risk_free_rate()
+        else:
+             risk_free_rate = self.risk_free_rate
+
+        # --- Select Expiration ---
+        expiration_date = self._select_expiration_date(expirations)
+        if not expiration_date:
+            return # User didn't select or no dates available
+
+        # Calculate time to expiration
+        today = dt.datetime.now().date()
+        exp_date = dt.datetime.strptime(expiration_date, '%Y-%m-%d').date()
+        days_to_expiration = max(0, (exp_date - today).days) # Ensure non-negative
+        T = days_to_expiration / 365.0 # Use 365 for consistency
+        print(f"Time to expiration (T): {T:.4f} years")
+
+        # --- Select Strike Price ---
+        strike = None
+        while strike is None:
+            strike_input = input(f"\nEnter strike price (e.g., {current_price:.2f}) or 'atm' for closest: ").lower()
+            if strike_input == 'atm':
+                try:
+                    options = stock.option_chain(expiration_date)
+                    # Combine call and put strikes, find unique ones, sort
+                    all_strikes = sorted(list(set(options.calls['strike'].tolist() + options.puts['strike'].tolist())))
+                    if not all_strikes:
+                         print("No strikes found for this expiration. Using current price.")
+                         strike = current_price
+                    else:
+                         # Find the strike closest to the current price
+                         strike = min(all_strikes, key=lambda x: abs(x - current_price))
+                         print(f"Found closest available strike: {self._format_currency(strike, currency)}")
+                except Exception as e:
+                    print(f"Could not fetch available strikes. Using current price. Error: {e}")
+                    strike = current_price # Fallback if fetching strikes fails
+            else:
+                try:
+                    strike = float(strike_input)
+                    if strike <= 0:
+                         print("Strike price must be positive.")
+                         strike = None # Force re-entry
+                except ValueError:
+                    print("Invalid input. Please enter a number or 'atm'.")
+
+        # --- Select Option Type ---
+        option_type = None
+        while option_type not in ['call', 'put', 'both']:
+            option_type_input = input("Calculate for 'call', 'put', or 'both'? (default 'both'): ").lower()
+            if not option_type_input:
+                option_type = 'both'
+            elif option_type_input in ['call', 'put', 'both']:
+                 option_type = option_type_input
+            else:
+                 print("Invalid option type.")
+
+        # --- Calculate and Display ---
+        results = {}
+        if option_type in ['call', 'both']:
+            bsm_price = self.black_scholes_merton(current_price, strike, T, risk_free_rate, volatility, "call")
+            greeks = self.calculate_option_greeks(current_price, strike, T, risk_free_rate, volatility, "call")
+            results['call'] = {'price': bsm_price, 'greeks': greeks}
+
+        if option_type in ['put', 'both']:
+            bsm_price = self.black_scholes_merton(current_price, strike, T, risk_free_rate, volatility, "put")
+            greeks = self.calculate_option_greeks(current_price, strike, T, risk_free_rate, volatility, "put")
+            results['put'] = {'price': bsm_price, 'greeks': greeks}
+
+        print(f"\n--- BSM Option Analysis ---")
+        print(f"Stock: {self.current_ticker} @ {self._format_currency(current_price, currency)}")
+        print(f"Strike: {self._format_currency(strike, currency)}")
+        print(f"Expiration: {expiration_date} ({days_to_expiration} days)")
+        print(f"Volatility (Input): {volatility*100:.2f}%")
+        print(f"Risk-Free Rate: {risk_free_rate*100:.2f}%")
+        print("-" * 25)
+
+        if 'call' in results:
+            print(f"BSM Call Price: {self._format_currency(results['call']['price'], currency)}")
+            if results['call']['greeks']:
+                g = results['call']['greeks']
+                print("  Greeks:")
+                print(f"    Delta: {g['delta']:.4f}")
+                print(f"    Gamma: {g['gamma']:.4f}")
+                print(f"    Theta: {self._format_currency(g['theta'], currency)} / day")
+                print(f"    Vega:  {self._format_currency(g['vega'], currency)} / 1% vol")
+                print(f"    Rho:   {self._format_currency(g['rho'], currency)} / 1% rate")
+            print("-" * 25)
+
+
+        if 'put' in results:
+            print(f"BSM Put Price: {self._format_currency(results['put']['price'], currency)}")
+            if results['put']['greeks']:
+                g = results['put']['greeks']
+                print("  Greeks:")
+                print(f"    Delta: {g['delta']:.4f}")
+                print(f"    Gamma: {g['gamma']:.4f}")
+                print(f"    Theta: {self._format_currency(g['theta'], currency)} / day")
+                print(f"    Vega:  {self._format_currency(g['vega'], currency)} / 1% vol")
+                print(f"    Rho:   {self._format_currency(g['rho'], currency)} / 1% rate")
+            print("-" * 25)
     
     
     
