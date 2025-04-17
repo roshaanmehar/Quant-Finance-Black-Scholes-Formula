@@ -1496,8 +1496,9 @@ class OptionsAnalyzer:
         print("  0. Exit")
         print("-" * 37)
         if self.favorite_tickers:
-             fav_str = ", ".join(self.favorite_tickers[:5]); [fav_str += "..." if len(self.favorite_tickers) > 5 else None]
-             print(f" Favorites: {fav_str}")
+            if len(self.favorite_tickers) > 5:
+                fav_str += "..." # Changed from invalid list comprehension syntax
+            print(f" Favs: {fav_str}")
         print("+" + "=" * 35 + "+")
 
     def run(self):
