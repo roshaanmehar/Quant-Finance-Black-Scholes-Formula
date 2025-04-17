@@ -9,7 +9,7 @@ from tabulate import tabulate
 import utils
 import config_manager
 import data_fetcher
-import bsm_formulas
+import options_formulas
 import plotting
 import strategies
 
