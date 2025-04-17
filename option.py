@@ -724,6 +724,21 @@ class OptionsAnalyzer:
             print("-" * 25)
 
     def calculate_options_chain(self):
+        
+        
+            if specific_expiration: # Use passed expiration if provided
+                expiration_date = specific_expiration
+                if expiration_date not in expirations:
+                    print(f"Error: Provided expiration '{expiration_date}' not valid for {ticker}.")
+                    return None
+                print(f"\nUsing specified expiration date: {expiration_date}")
+            else: # Otherwise, prompt the user (for console use) or select first (better for API use)
+                # For streamlit, we rely on specific_expiration being passed.
+                # If called without it from backend, maybe default to first or raise error.
+                # Let's keep the selection logic but know it won't be hit from app.py
+                expiration_date = self._select_expiration_date(expirations)
+                if not expiration_date:
+                    return None
         """Calculate and display a detailed options chain for a selected expiration."""
         if self.current_stock_data is None:
             print("\nPlease fetch stock data first (Option 1).")
@@ -950,10 +965,10 @@ class OptionsAnalyzer:
             # Use tabulate for printing
             print(tabulate(display_df, headers='keys', tablefmt='psql', showindex=False, floatfmt=".2f", numalign="right", stralign="right")) # , formatters=formatters doesn't work with tabulate directly
 
-            # Ask to visualize
-            visualize = input("\nVisualize this options chain (Price/IV)? (y/n): ").lower()
-            if visualize == 'y':
-                self.visualize_options_chain(results_df, current_price, currency, expiration_date)
+            # # Ask to visualize
+            # visualize = input("\nVisualize this options chain (Price/IV)? (y/n): ").lower()
+            # if visualize == 'y':
+            #     self.visualize_options_chain(results_df, current_price, currency, expiration_date)
 
             return results_df # Return the raw calculated data
 
