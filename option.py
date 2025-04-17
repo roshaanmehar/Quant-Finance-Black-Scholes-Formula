@@ -1262,4 +1262,477 @@ class OptionsAnalyzer:
                 return market_price
             else:
                 # Fallback to BSM estimate
-                print(f"Warning: Market price for {option_type.capitalize()} K={strike} unavailable
+                print(f"Warning: Market price for {option_type.capitalize()} K={strike} unavailable/zero. Using BSM estimate.")
+                vol = volatility if volatility is not None else 0.3 # Use historical or default 30%
+                if volatility is None: print(" (Using default 30% volatility for estimate)")
+                r = risk_free_rate if risk_free_rate is not None else self.config['default_risk_free_rate']
+                q = dividend_yield
+                today = dt.datetime.now().date()
+                exp_d = dt.datetime.strptime(exp_date, '%Y-%m-%d').date()
+                T_est = max(0, (exp_d - today).days) / 365.0
+                bsm_est = self.black_scholes_merton(S0, strike, T_est, r, q, vol, option_type)
+
+                if pd.isna(bsm_est) or bsm_est <= 0:
+                    raise ValueError(f"Could not estimate valid price for {option_type.capitalize()} K={strike} using BSM.")
+                print(f"BSM Estimated Price: {self._format_currency(bsm_est, currency)}")
+                return bsm_est
+
+        # --- Get Strategy Specific Parameters ---
+        strategy_legs = []
+        strategy_name = ""
+        breakevens = []
+        max_profit = np.nan
+        max_loss = np.nan
+
+        try:
+            # --- Covered Call ---
+            if strategy_choice == 1:
+                strategy_name = "Covered Call"
+                print(f"\n--- {strategy_name} Setup ---")
+                print(f"Action: Buy 100 shares of {self.current_ticker} (@{self._format_currency(S0, currency)}) and Sell 1 Call Option.")
+                strike_input = input(f"Enter Call Strike Price (e.g., slightly OTM like {S0*1.05:.2f}): ")
+                K_call = float(strike_input)
+                if K_call <= 0: raise ValueError("Strike must be positive.")
+
+                call_premium = get_option_price(K_call, 'call', expiration_date)
+                print(f"Received premium for selling Call K={K_call}: {self._format_currency(call_premium, currency)}")
+
+                strategy_legs = [
+                    {'type': 'stock', 'dir': 'long', 'price': S0}, # Cost of stock is S0
+                    {'type': 'call', 'dir': 'short', 'K': K_call, 'price': call_premium} # Premium received for call
+                ]
+                cost_basis = S0 - call_premium # Net cost after receiving premium
+                breakeven = cost_basis
+                max_profit = (K_call - S0) + call_premium # = K_call - cost_basis
+                max_loss = -cost_basis # Loss if stock goes to 0
+                print(f"Net Cost Basis (Stock Price - Premium): {self._format_currency(cost_basis, currency)}")
+
+            # --- Protective Put ---
+            elif strategy_choice == 2:
+                strategy_name = "Protective Put"
+                print(f"\n--- {strategy_name} Setup ---")
+                print(f"Action: Buy 100 shares of {self.current_ticker} (@{self._format_currency(S0, currency)}) and Buy 1 Put Option.")
+                strike_input = input(f"Enter Put Strike Price (e.g., slightly OTM like {S0*0.95:.2f}): ")
+                K_put = float(strike_input)
+                if K_put <= 0: raise ValueError("Strike must be positive.")
+
+                put_premium = get_option_price(K_put, 'put', expiration_date)
+                print(f"Cost for buying Put K={K_put}: {self._format_currency(put_premium, currency)}")
+
+                strategy_legs = [
+                    {'type': 'stock', 'dir': 'long', 'price': S0},
+                    {'type': 'put', 'dir': 'long', 'K': K_put, 'price': put_premium}
+                ]
+                total_cost = S0 + put_premium # Total outlay
+                breakeven = total_cost
+                max_profit = float('inf') # Unlimited upside from stock
+                # Max loss occurs if stock drops below K_put. Loss = Initial Cost - Value at K_put = (S0 + Prem) - K_put
+                # Or simply loss = total_cost - K_put
+                max_loss = -(total_cost - K_put) # Loss is difference between breakeven and strike
+                print(f"Total Cost (Stock Price + Premium): {self._format_currency(total_cost, currency)}")
+
+            # --- Bull Call Spread ---
+            elif strategy_choice == 3:
+                 strategy_name = "Bull Call Spread"
+                 print(f"\n--- {strategy_name} Setup ---")
+                 print(f"Action: Buy 1 Lower Strike Call and Sell 1 Higher Strike Call.")
+                 K_low_str = input(f"Enter Lower Call Strike (Long, e.g., {S0*0.98:.2f}): ")
+                 K_high_str = input(f"Enter Higher Call Strike (Short, e.g., {S0*1.02:.2f}): ")
+                 K_low = float(K_low_str)
+                 K_high = float(K_high_str)
+                 if not (0 < K_low < K_high): raise ValueError("Strikes must be positive and Low < High.")
+
+                 prem_low = get_option_price(K_low, 'call', expiration_date)
+                 prem_high = get_option_price(K_high, 'call', expiration_date)
+
+                 net_debit = prem_low - prem_high
+                 print(f"Cost of Long Call K={K_low}: {self._format_currency(prem_low, currency)}")
+                 print(f"Credit from Short Call K={K_high}: {self._format_currency(prem_high, currency)}")
+                 if net_debit > 0: print(f"Net Debit (Cost): {self._format_currency(net_debit, currency)}")
+                 else: print(f"Net Credit (Received): {self._format_currency(abs(net_debit), currency)}")
+
+                 strategy_legs = [
+                      {'type': 'call', 'dir': 'long', 'K': K_low, 'price': prem_low},
+                      {'type': 'call', 'dir': 'short', 'K': K_high, 'price': prem_high}
+                 ]
+                 max_profit = (K_high - K_low) - net_debit # Width of spread minus net cost
+                 max_loss = -net_debit # Net cost is max loss (or negative of net credit)
+                 breakeven = K_low + net_debit # Lower strike + net cost
+
+            # --- Bear Put Spread ---
+            elif strategy_choice == 4:
+                 strategy_name = "Bear Put Spread"
+                 print(f"\n--- {strategy_name} Setup ---")
+                 print(f"Action: Buy 1 Higher Strike Put and Sell 1 Lower Strike Put.")
+                 K_high_str = input(f"Enter Higher Put Strike (Long, e.g., {S0*1.02:.2f}): ")
+                 K_low_str = input(f"Enter Lower Put Strike (Short, e.g., {S0*0.98:.2f}): ")
+                 K_high = float(K_high_str)
+                 K_low = float(K_low_str)
+                 if not (0 < K_low < K_high): raise ValueError("Strikes must be positive and Low < High.")
+
+                 prem_high = get_option_price(K_high, 'put', expiration_date)
+                 prem_low = get_option_price(K_low, 'put', expiration_date)
+
+                 net_debit = prem_high - prem_low
+                 print(f"Cost of Long Put K={K_high}: {self._format_currency(prem_high, currency)}")
+                 print(f"Credit from Short Put K={K_low}: {self._format_currency(prem_low, currency)}")
+                 if net_debit > 0: print(f"Net Debit (Cost): {self._format_currency(net_debit, currency)}")
+                 else: print(f"Net Credit (Received): {self._format_currency(abs(net_debit), currency)}")
+
+                 strategy_legs = [
+                      {'type': 'put', 'dir': 'long', 'K': K_high, 'price': prem_high},
+                      {'type': 'put', 'dir': 'short', 'K': K_low, 'price': prem_low}
+                 ]
+                 max_profit = (K_high - K_low) - net_debit # Width of spread minus net cost
+                 max_loss = -net_debit # Net cost is max loss
+                 breakeven = K_high - net_debit # Higher strike - net cost
+
+            # --- Long Straddle ---
+            elif strategy_choice == 5:
+                strategy_name = "Long Straddle"
+                print(f"\n--- {strategy_name} Setup ---")
+                print(f"Action: Buy 1 ATM Call and Buy 1 ATM Put (same strike & expiration).")
+                # Find ATM strike
+                try:
+                     options = self.current_stock_data['ticker_object'].option_chain(expiration_date)
+                     all_strikes = sorted(list(set(options.calls['strike'].tolist() + options.puts['strike'].tolist())))
+                     if not all_strikes: raise ValueError("No strikes found.")
+                     K_atm = min(all_strikes, key=lambda x: abs(x - S0))
+                     print(f"Using closest ATM strike: {self._format_currency(K_atm, currency)}")
+                except Exception as e:
+                     raise ValueError(f"Could not determine ATM strike: {e}. Please enter manually.") # Should ideally handle manual entry
+
+                prem_call = get_option_price(K_atm, 'call', expiration_date)
+                prem_put = get_option_price(K_atm, 'put', expiration_date)
+
+                total_cost = prem_call + prem_put
+                print(f"Cost of Long Call K={K_atm}: {self._format_currency(prem_call, currency)}")
+                print(f"Cost of Long Put K={K_atm}: {self._format_currency(prem_put, currency)}")
+                print(f"Total Cost (Net Debit): {self._format_currency(total_cost, currency)}")
+
+                strategy_legs = [
+                      {'type': 'call', 'dir': 'long', 'K': K_atm, 'price': prem_call},
+                      {'type': 'put', 'dir': 'long', 'K': K_atm, 'price': prem_put}
+                ]
+                max_profit = float('inf') # Unlimited potential profit
+                max_loss = -total_cost # Loss is the total premium paid
+                breakeven_up = K_atm + total_cost
+                breakeven_down = K_atm - total_cost
+
+            # --- Long Strangle ---
+            elif strategy_choice == 6:
+                strategy_name = "Long Strangle"
+                print(f"\n--- {strategy_name} Setup ---")
+                print(f"Action: Buy 1 OTM Call and Buy 1 OTM Put (different strikes, same expiration).")
+                K_call_str = input(f"Enter OTM Call Strike (Long, e.g., > {S0*1.05:.2f}): ")
+                K_put_str = input(f"Enter OTM Put Strike (Long, e.g., < {S0*0.95:.2f}): ")
+                K_call = float(K_call_str)
+                K_put = float(K_put_str)
+                if not (0 < K_put < K_call): # Basic check
+                     print("Warning: Ensure Put Strike < Call Strike for typical strangle.")
+                if K_put <= 0 or K_call <= 0: raise ValueError("Strikes must be positive.")
+                if K_put >= S0 or K_call <= S0:
+                    print(f"Warning: One or both strikes (P:{K_put}, C:{K_call}) might not be OTM relative to current price {S0:.2f}.")
+
+                prem_call = get_option_price(K_call, 'call', expiration_date)
+                prem_put = get_option_price(K_put, 'put', expiration_date)
+
+                total_cost = prem_call + prem_put
+                print(f"Cost of Long Call K={K_call}: {self._format_currency(prem_call, currency)}")
+                print(f"Cost of Long Put K={K_put}: {self._format_currency(prem_put, currency)}")
+                print(f"Total Cost (Net Debit): {self._format_currency(total_cost, currency)}")
+
+                strategy_legs = [
+                      {'type': 'call', 'dir': 'long', 'K': K_call, 'price': prem_call},
+                      {'type': 'put', 'dir': 'long', 'K': K_put, 'price': prem_put}
+                ]
+                max_profit = float('inf')
+                max_loss = -total_cost
+                breakeven_up = K_call + total_cost
+                breakeven_down = K_put - total_cost
+
+            # --- Common Calculation & Plotting ---
+            if strategy_legs:
+                 # Define price range for plotting payoff
+                price_range_factor = self.config['strategy_price_range'] # e.g., 0.3 for +/- 30%
+                # Ensure range covers strikes and breakevens
+                all_points = [S0] + [leg['K'] for leg in strategy_legs if 'K' in leg]
+                if 'breakeven_down' in locals(): all_points.append(breakeven_down)
+                if 'breakeven_up' in locals(): all_points.append(breakeven_up)
+                if 'breakeven' in locals(): all_points.append(breakeven)
+                valid_points = [p for p in all_points if pd.notna(p)]
+
+                S_T_min_calc = min(valid_points) * (1 - price_range_factor * 0.5) # Extend slightly beyond min point
+                S_T_max_calc = max(valid_points) * (1 + price_range_factor * 0.5) # Extend slightly beyond max point
+
+                # Ensure min/max based on S0 range are also considered
+                S_T_min_s0 = S0 * (1 - price_range_factor)
+                S_T_max_s0 = S0 * (1 + price_range_factor)
+
+                S_T_min = max(0, min(S_T_min_calc, S_T_min_s0)) # Ensure price >= 0
+                S_T_max = max(S_T_max_calc, S_T_max_s0)
+
+                S_T_range = np.linspace(S_T_min, S_T_max, 150) # More points for smoother curve
+
+                # Calculate P/L for each price in the range
+                PnL = np.array([self._calculate_payoff(s_t, strategy_legs) for s_t in S_T_range])
+
+                # Collect breakevens properly
+                breakevens = []
+                if 'breakeven' in locals(): breakevens.append(breakeven)
+                if 'breakeven_down' in locals(): breakevens.append(breakeven_down)
+                if 'breakeven_up' in locals(): breakevens.append(breakeven_up)
+                breakevens = [b for b in breakevens if pd.notna(b)] # Clean final list
+
+                # Display Summary
+                print("\n--- Strategy Summary ---")
+                print(f"Strategy: {strategy_name}")
+                print(f"Expiration: {expiration_date}")
+                print(f"Current Underlying Price: {self._format_currency(S0, currency)}")
+                print("Legs:")
+                for i, leg in enumerate(strategy_legs):
+                     k_str = f" K={self._format_currency(leg['K'], currency)}" if 'K' in leg else ""
+                     p_str = f" @ {self._format_currency(leg['price'], currency)}"
+                     print(f"  {i+1}: {leg['dir'].capitalize()} {leg['type'].capitalize()}{k_str}{p_str}")
+
+                net_cost_display = sum(l['price'] for l in strategy_legs if l['dir']=='long') - sum(l['price'] for l in strategy_legs if l['dir']=='short')
+                if net_cost_display > 0: print(f"Net Cost (Debit): {self._format_currency(net_cost_display, currency)}")
+                else: print(f"Net Credit: {self._format_currency(abs(net_cost_display), currency)}")
+
+                be_str = ", ".join([self._format_currency(be, currency) for be in sorted(breakevens)]) or "N/A"
+                mp_str = self._format_currency(max_profit, currency) if pd.notna(max_profit) and max_profit != float('inf') else ('Unlimited' if max_profit == float('inf') else 'N/A')
+                ml_str = self._format_currency(max_loss, currency) if pd.notna(max_loss) and max_loss != float('-inf') else ('Unlimited' if max_loss == float('-inf') else 'N/A')
+
+                print(f"\nBreakeven(s) at Expiration: {be_str}")
+                print(f"Maximum Potential Profit: {mp_str}")
+                print(f"Maximum Potential Loss: {ml_str}")
+
+                # Plot Payoff Diagram
+                print("\nGenerating Payoff Diagram...")
+                self._plot_payoff(S_T_range, PnL, strategy_name, breakevens, max_profit, max_loss, currency)
+
+        except ValueError as ve:
+             print(f"\nInput Error: {ve}")
+        except Exception as e:
+             print(f"\nAn error occurred during strategy analysis: {e}")
+             if self.config['debug_mode']:
+                  traceback.print_exc()
+
+
+    # --- Menu and Application Flow (Console) ---
+
+    def manage_favorites(self):
+        """Manage the list of favorite tickers (Console)."""
+        while True:
+            self.clear_screen()
+            print("--- Manage Favorite Tickers ---")
+            if not self.favorite_tickers:
+                print("No favorite tickers saved.")
+            else:
+                print("Current Favorites:")
+                for i, ticker in enumerate(self.favorite_tickers):
+                    print(f" {i+1}. {ticker}")
+
+            print("\nOptions:")
+            print(" 1. Add Ticker")
+            print(" 2. Remove Ticker")
+            print(" 0. Back to Main Menu")
+
+            choice = input("Enter option: ")
+
+            if choice == '1':
+                ticker_to_add = input("Enter ticker symbol to add: ").upper().strip()
+                if ticker_to_add and self.validate_ticker(ticker_to_add): # Validate before adding
+                    if ticker_to_add not in self.favorite_tickers:
+                        self.favorite_tickers.append(ticker_to_add)
+                        self.favorite_tickers.sort() # Keep list sorted
+                        self._save_favorite_tickers()
+                        print(f"'{ticker_to_add}' added to favorites.")
+                    else:
+                         print(f"'{ticker_to_add}' is already in favorites.")
+                elif ticker_to_add:
+                     print(f"Could not validate '{ticker_to_add}'. Not added.")
+                input("Press Enter to continue...")
+            elif choice == '2':
+                if not self.favorite_tickers:
+                    print("No favorites to remove.")
+                    input("Press Enter to continue...")
+                    continue
+                try:
+                    num_to_remove = int(input("Enter the number of the ticker to remove: "))
+                    if 1 <= num_to_remove <= len(self.favorite_tickers):
+                        removed_ticker = self.favorite_tickers.pop(num_to_remove - 1)
+                        self._save_favorite_tickers()
+                        print(f"'{removed_ticker}' removed from favorites.")
+                    else:
+                        print("Invalid number.")
+                except ValueError:
+                    print("Invalid input. Please enter a number.")
+                input("Press Enter to continue...")
+            elif choice == '0':
+                break
+            else:
+                print("Invalid option.")
+                input("Press Enter to continue...")
+
+    def manage_settings(self):
+         """Allow user to view and modify configuration settings (Console)."""
+         while True:
+             self.clear_screen()
+             print("--- Configure Settings ---")
+             settings_list = list(self.config.items())
+
+             for i, (key, value) in enumerate(settings_list):
+                 print(f" {i+1}. {key}: {value}")
+
+             print("\n 0. Back to Main Menu (Save Changes)")
+
+             choice = input("\nEnter the number of the setting to change (or 0 to save and exit): ")
+
+             try:
+                  choice_idx = int(choice)
+                  if choice_idx == 0:
+                       self._save_config()
+                       print("Settings saved.")
+                       # Re-fetch rate if default rate changed? Optional.
+                       if 'default_risk_free_rate' in self.config:
+                           self.get_risk_free_rate(verbose=False) # Silently update if needed
+                       break
+                  elif 1 <= choice_idx <= len(settings_list):
+                       setting_key, current_value = settings_list[choice_idx - 1]
+                       # Prevent changing certain types easily if needed
+                       if isinstance(current_value, (dict, list)):
+                            print(f"Changing complex setting '{setting_key}' not supported via basic input.")
+                            input("Press Enter to continue...")
+                            continue
+
+                       new_value_str = input(f"Enter new value for '{setting_key}' (current: {current_value}): ")
+
+                       # Try to convert to the correct type
+                       try:
+                            target_type = type(current_value)
+                            if target_type == bool:
+                                 if new_value_str.lower() in ['true', 't', 'yes', 'y', '1']: new_value = True
+                                 elif new_value_str.lower() in ['false', 'f', 'no', 'n', '0']: new_value = False
+                                 else: raise ValueError("Invalid boolean value")
+                            else: # Handles int, float, str
+                                 new_value = target_type(new_value_str)
+
+                            # Add validation checks for specific settings
+                            if setting_key == 'max_strikes_chain' and not (5 <= new_value <= 100):
+                                print("Error: Max strikes must be between 5 and 100.")
+                                new_value = current_value # Revert
+                            elif setting_key == 'default_risk_free_rate' and not (0 <= new_value <= 0.5):
+                                print("Error: Default rate must be between 0% and 50%.")
+                                new_value = current_value # Revert
+                            # Add more validation as needed...
+
+                            self.config[setting_key] = new_value
+                            print(f"Set '{setting_key}' to '{new_value}'.")
+
+                       except ValueError:
+                            print(f"Invalid value type entered for '{setting_key}'. Expected type: {type(current_value).__name__}. No change made.")
+
+                       input("Press Enter to continue...")
+                  else:
+                       print("Invalid selection.")
+                       input("Press Enter to continue...")
+
+             except ValueError:
+                  print("Invalid input. Please enter a number.")
+                  input("Press Enter to continue...")
+
+
+    def display_main_menu(self):
+        """Display the main console menu options."""
+        self.clear_screen()
+        print("+" + "=" * 35 + "+")
+        print("|     Options Analyzer Menu         |")
+        print("+" + "=" * 35 + "+")
+        if self.current_ticker and self.current_stock_data:
+            curr_price = self._format_currency(self.current_stock_data['current_price'], self.current_stock_data['currency'])
+            print(f" Current Ticker: {self.current_ticker} ({curr_price})")
+        else:
+            print(" Current Ticker: None")
+        print("-" * 37)
+        print("  1. Fetch Stock Data / Change Ticker")
+        print("  2. Simple Option Price (BSM & Greeks)")
+        print("  3. View Options Chain (Table & Graph)")
+        print("  4. Analyze Option Strategy (Payoff)")
+        print("  5. Manage Favorite Tickers")
+        print("  6. Configure Settings")
+        print("  0. Exit")
+        print("-" * 37)
+        if self.favorite_tickers:
+             fav_str = ", ".join(self.favorite_tickers[:5]) # Show first 5 favorites
+             if len(self.favorite_tickers) > 5: fav_str += "..."
+             print(f" Favorites: {fav_str}")
+        print("+" + "=" * 35 + "+")
+
+
+    def run(self):
+        """Main console application loop."""
+        print("Welcome to the Enhanced Options Analyzer!")
+        while True:
+            self.display_main_menu()
+            choice = input("Enter your choice: ")
+
+            if choice == '1':
+                # Suggest current ticker or favorites
+                prompt = "Enter ticker symbol"
+                options = []
+                if self.current_ticker: options.append(f"Enter for '{self.current_ticker}'")
+                if self.favorite_tickers: options.append("type 'fav'")
+                if options: prompt += f" ({', '.join(options)})"
+
+                ticker_input = input(f"{prompt}: ").upper().strip()
+
+                selected_ticker = None
+                if not ticker_input and self.current_ticker:
+                     selected_ticker = self.current_ticker # Keep current
+                     print(f"Refreshing data for current ticker: {selected_ticker}")
+                     self.get_stock_data(selected_ticker) # Re-fetch data
+                elif ticker_input == 'FAV' and self.favorite_tickers:
+                     print("\nFavorites:")
+                     for i, fav in enumerate(self.favorite_tickers):
+                          print(f"  {i+1}. {fav}")
+                     fav_choice = input("Select favorite number: ")
+                     try:
+                          idx = int(fav_choice) - 1
+                          if 0 <= idx < len(self.favorite_tickers):
+                               selected_ticker = self.favorite_tickers[idx]
+                          else: print("Invalid favorite number.")
+                     except ValueError: print("Invalid input.")
+                elif ticker_input:
+                      selected_ticker = ticker_input
+
+                if selected_ticker and selected_ticker != self.current_ticker:
+                    self.get_stock_data(selected_ticker) # Fetch/update data only if new/valid
+                elif not selected_ticker and not ticker_input and not self.current_ticker:
+                     print("No ticker entered.")
+
+
+            elif choice == '2':
+                 self.get_simple_option_price()
+            elif choice == '3':
+                 self.calculate_options_chain(visualize=False) # Let user choose viz inside
+            elif choice == '4':
+                 self.analyze_strategy()
+            elif choice == '5':
+                 self.manage_favorites()
+            elif choice == '6':
+                 self.manage_settings()
+            elif choice == '0':
+                print("\nExiting Options Analyzer. Goodbye!")
+                break
+            else:
+                print("Invalid choice. Please try again.")
+
+            # Pause at the end of each action cycle
+            if choice != '0': # Don't pause after exiting
+                input("\nPress Enter to return to the Main Menu...")
+
+
+if __name__ == "__main__":
+    analyzer = OptionsAnalyzer()
+    analyzer.run()
