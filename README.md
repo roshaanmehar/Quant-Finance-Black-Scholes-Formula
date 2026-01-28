@@ -339,6 +339,13 @@ Create `options_config.json` to customize behavior:
 
 ---
 
+## Screenshots
+![](https://github.com/roshaanmehar/Quant-Finance-Black-Scholes-Formula/blob/main/Screenshot%202026-01-28%20105449.png)
+![](https://github.com/roshaanmehar/Quant-Finance-Black-Scholes-Formula/blob/main/Screenshot%202026-01-28%20105502.png)
+![](https://github.com/roshaanmehar/Quant-Finance-Black-Scholes-Formula/blob/main/Screenshot%202026-01-28%20105518.png)
+![](https://github.com/roshaanmehar/Quant-Finance-Black-Scholes-Formula/blob/main/Screenshot%202026-01-28%20105602.png)
+![}(https://github.com/roshaanmehar/Quant-Finance-Black-Scholes-Formula/blob/main/Screenshot%202026-01-28%20105615.png)
+
 ## Dependencies
 
 ### Python
